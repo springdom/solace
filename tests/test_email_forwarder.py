@@ -7,6 +7,12 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# The email forwarder is a standalone script that depends on `requests`,
+# which is not a core backend dependency. Skip the entire module if missing.
+pytest.importorskip("requests", reason="requests is required for email forwarder tests")
+
 # Add the forwarder script to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts", "email_forwarder"))
 
