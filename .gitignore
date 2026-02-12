@@ -21,6 +21,8 @@ env/
 
 # Environment
 .env
+.env.*
+!.env.example
 
 # Testing
 htmlcov/
@@ -37,7 +39,8 @@ redis_data/
 .DS_Store
 Thumbs.db
 
-# Node (frontend)
-frontend/node_modules/
+# Node
+node_modules/
+
+# Frontend
 frontend/dist/
-frontend/.env.local
