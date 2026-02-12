@@ -35,6 +35,7 @@ class NormalizedAlert:
         host: str | None = None,
         labels: dict | None = None,
         annotations: dict | None = None,
+        tags: list[str] | None = None,
         source_instance: str | None = None,
         starts_at: datetime | None = None,
         ends_at: datetime | None = None,
@@ -51,6 +52,7 @@ class NormalizedAlert:
         self.host = host
         self.labels = labels or {}
         self.annotations = annotations or {}
+        self.tags = tags or []
         self.source_instance = source_instance
         self.starts_at = starts_at or datetime.now(UTC)
         self.ends_at = ends_at
@@ -104,6 +106,7 @@ class GenericNormalizer(BaseNormalizer):
             host=data.host,
             labels=data.labels,
             annotations=data.annotations,
+            tags=data.tags,
             source_instance=data.source_instance,
             starts_at=data.starts_at,
             ends_at=data.ends_at,
@@ -122,8 +125,8 @@ NORMALIZERS: dict[str, BaseNormalizer] = {
     "prometheus": None,  # lazy-loaded below
     "splunk": None,      # lazy-loaded below
     "email": None,       # lazy-loaded below
-    # "grafana": GrafanaNormalizer(),        # TODO
-    # "datadog": DatadogNormalizer(),        # TODO
+    "grafana": None,     # lazy-loaded below
+    "datadog": None,     # lazy-loaded below
 }
 
 
@@ -146,5 +149,11 @@ def get_normalizer(provider: str) -> BaseNormalizer:
         elif provider == "email":
             from backend.integrations.email_ingest import EmailNormalizer
             NORMALIZERS[provider] = EmailNormalizer()
+        elif provider == "grafana":
+            from backend.integrations.grafana import GrafanaNormalizer
+            NORMALIZERS[provider] = GrafanaNormalizer()
+        elif provider == "datadog":
+            from backend.integrations.datadog import DatadogNormalizer
+            NORMALIZERS[provider] = DatadogNormalizer()
 
     return NORMALIZERS[provider]  # type: ignore

@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     flap_threshold_high: int = 50
     flap_threshold_low: int = 25
 
+    # ── Notifications ─────────────────────────────────────
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = True
+    smtp_from_address: str = "solace@localhost"
+    notification_cooldown_seconds: int = 300
+    solace_dashboard_url: str = "http://localhost:3000"
+
     # ── Server ───────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000

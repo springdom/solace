@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import type { Alert, Incident, Severity } from './lib/types';
+import { api } from './lib/api';
 import { useAlerts } from './hooks/useAlerts';
 import { useIncidents } from './hooks/useIncidents';
 import { AlertRow } from './components/AlertRow';
@@ -12,9 +13,11 @@ import { Pagination } from './components/Pagination';
 import { StatsBar } from './components/StatsBar';
 import { ColumnHeader } from './components/ColumnHeader';
 import { useStats } from './hooks/useStats';
+import { SilenceList } from './components/SilenceList';
+import { NotificationChannelList } from './components/NotificationChannelList';
 import type { SortOption } from './components/SortControl';
 
-type View = 'alerts' | 'incidents';
+type View = 'alerts' | 'incidents' | 'silences' | 'channels';
 
 const ALERT_STATUS_TABS = [
   { key: '', label: 'All' },
@@ -161,6 +164,15 @@ export default function App() {
     }
   };
 
+  const handleAlertSelectFromIncident = useCallback(async (alertId: string) => {
+    try {
+      const alert = await api.alerts.get(alertId);
+      setSelectedAlert(alert);
+    } catch {
+      // Alert may have been deleted
+    }
+  }, []);
+
   const switchView = (newView: View) => {
     setView(newView);
     setSelectedAlert(null);
@@ -239,6 +251,30 @@ export default function App() {
             >
               Alerts
             </button>
+            <button
+              onClick={() => switchView('silences')}
+              className={`
+                px-3 py-1.5 text-xs font-medium rounded-md transition-colors
+                ${view === 'silences'
+                  ? 'bg-solace-bg text-solace-bright shadow-sm'
+                  : 'text-solace-muted hover:text-solace-text'
+                }
+              `}
+            >
+              Silences
+            </button>
+            <button
+              onClick={() => switchView('channels')}
+              className={`
+                px-3 py-1.5 text-xs font-medium rounded-md transition-colors
+                ${view === 'channels'
+                  ? 'bg-solace-bg text-solace-bright shadow-sm'
+                  : 'text-solace-muted hover:text-solace-text'
+                }
+              `}
+            >
+              Channels
+            </button>
           </div>
 
           <div className="w-px h-5 bg-solace-border" />
@@ -260,7 +296,9 @@ export default function App() {
           <span className="text-xs text-solace-muted font-mono">
             {view === 'incidents'
               ? `${incidentsHook.total} incident${incidentsHook.total !== 1 ? 's' : ''}`
-              : `${alertsHook.total} alert${alertsHook.total !== 1 ? 's' : ''}`
+              : view === 'alerts'
+              ? `${alertsHook.total} alert${alertsHook.total !== 1 ? 's' : ''}`
+              : null
             }
           </span>
           <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-dot" title="Connected" />
@@ -268,7 +306,7 @@ export default function App() {
       </header>
 
       {/* ─── Toolbar: Status tabs + Search + Sort ───────── */}
-      <div className="flex-shrink-0 flex items-center justify-between px-5 py-2 border-b border-solace-border bg-solace-bg gap-3">
+      {(view === 'alerts' || view === 'incidents') && <div className="flex-shrink-0 flex items-center justify-between px-5 py-2 border-b border-solace-border bg-solace-bg gap-3">
         {/* Left: Status tabs + severity pills (alerts only) */}
         <div className="flex items-center gap-1 flex-wrap">
           {view === 'alerts' ? (
@@ -366,10 +404,20 @@ export default function App() {
         </div>
       </div>
 
+      }
       {/* ─── Stats Bar ──────────────────────────────────── */}
-      <StatsBar stats={stats} />
+      {(view === 'alerts' || view === 'incidents') && <StatsBar stats={stats} />}
 
       {/* ─── Body ───────────────────────────────────────── */}
+      {view === 'silences' ? (
+        <div className="flex-1 min-h-0">
+          <SilenceList />
+        </div>
+      ) : view === 'channels' ? (
+        <div className="flex-1 min-h-0">
+          <NotificationChannelList />
+        </div>
+      ) : (
       <div className="flex-1 flex min-h-0">
         {/* List */}
         <div className="flex-1 flex flex-col min-h-0">
@@ -504,27 +552,40 @@ export default function App() {
         </div>
 
         {/* Detail panel */}
-        {view === 'alerts' && selectedAlert && (
+        {/* Alert detail panel — shown in alerts view OR when drilled in from incident */}
+        {selectedAlert && (
           <div className="w-[400px] flex-shrink-0">
             <AlertDetail
               alert={selectedAlert}
               onAcknowledge={handleAlertAck}
               onResolve={handleAlertResolve}
               onClose={() => setSelectedAlert(null)}
+              onTagAdd={async (alertId, tag) => {
+                const updated = await alertsHook.addTag(alertId, tag);
+                if (updated) setSelectedAlert(updated);
+                return updated;
+              }}
+              onTagRemove={async (alertId, tag) => {
+                const updated = await alertsHook.removeTag(alertId, tag);
+                if (updated) setSelectedAlert(updated);
+                return updated;
+              }}
             />
           </div>
         )}
-        {view === 'incidents' && selectedIncident && (
+        {view === 'incidents' && selectedIncident && !selectedAlert && (
           <div className="w-[420px] flex-shrink-0">
             <IncidentDetail
               incident={selectedIncident}
               onAcknowledge={handleIncidentAck}
               onResolve={handleIncidentResolve}
               onClose={() => setSelectedIncident(null)}
+              onAlertSelect={handleAlertSelectFromIncident}
             />
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

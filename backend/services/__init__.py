@@ -8,9 +8,11 @@ from sqlalchemy.orm import selectinload
 from backend.core.correlation import correlate_alert
 from backend.core.dedup import find_duplicate, process_duplicate
 from backend.core.fingerprint import generate_fingerprint
+from backend.core.silence import check_silence
 from backend.integrations import NormalizedAlert
 from backend.models import (
     Alert,
+    AlertNote,
     AlertStatus,
     Incident,
     IncidentEvent,
@@ -57,7 +59,39 @@ async def ingest_alert(
         )
         return updated, True
 
-    # Step 3b: Create new alert
+    # Step 3b: Check silence windows
+    silence = await check_silence(db, normalized)
+    if silence:
+        alert = Alert(
+            fingerprint=fingerprint,
+            source=normalized.source,
+            source_instance=normalized.source_instance,
+            status=AlertStatus.SUPPRESSED,
+            severity=Severity(normalized.severity),
+            name=normalized.name,
+            description=normalized.description,
+            service=normalized.service,
+            environment=normalized.environment,
+            host=normalized.host,
+            labels=normalized.labels,
+            annotations=normalized.annotations,
+            tags=normalized.tags,
+            raw_payload=normalized.raw_payload,
+            starts_at=normalized.starts_at or datetime.now(UTC),
+            ends_at=normalized.ends_at,
+            generator_url=normalized.generator_url,
+            last_received_at=datetime.now(UTC),
+        )
+        db.add(alert)
+        await db.flush()
+        await db.refresh(alert)
+        logger.info(
+            f"Alert suppressed by silence '{silence.name}': {normalized.name} "
+            f"(fingerprint={fingerprint}, id={alert.id})"
+        )
+        return alert, False
+
+    # Step 3c: Create new alert
     alert = Alert(
         fingerprint=fingerprint,
         source=normalized.source,
@@ -71,6 +105,7 @@ async def ingest_alert(
         host=normalized.host,
         labels=normalized.labels,
         annotations=normalized.annotations,
+        tags=normalized.tags,
         raw_payload=normalized.raw_payload,
         starts_at=normalized.starts_at or datetime.now(UTC),
         ends_at=normalized.ends_at,
@@ -87,7 +122,14 @@ async def ingest_alert(
     await db.refresh(alert)
 
     # Step 4: Correlate to an incident
-    incident = await correlate_alert(db, alert)
+    from backend.core.notifications import dispatch_notifications
+
+    result = await correlate_alert(db, alert)
+    incident = result.incident
+
+    # Step 5: Dispatch notifications for significant events
+    if incident and result.event_type in ("incident_created", "severity_changed"):
+        await dispatch_notifications(db, incident, result.event_type)
 
     logger.info(
         f"New alert: {normalized.name} (fingerprint={fingerprint}, "
@@ -361,6 +403,128 @@ async def resolve_incident(
     await db.flush()
     await db.refresh(incident)
     return incident
+
+
+# ─── Alert Tags ──────────────────────────────────────────
+
+
+async def update_alert_tags(
+    db: AsyncSession, alert_id: str, tags: list[str]
+) -> Alert | None:
+    """Replace all tags on an alert."""
+    stmt = select(Alert).where(Alert.id == alert_id)
+    result = await db.execute(stmt)
+    alert = result.scalar_one_or_none()
+    if not alert:
+        return None
+    alert.tags = tags
+    alert.updated_at = datetime.now(UTC)
+    await db.flush()
+    await db.refresh(alert)
+    return alert
+
+
+async def add_alert_tag(
+    db: AsyncSession, alert_id: str, tag: str
+) -> Alert | None:
+    """Add a single tag to an alert (if not already present)."""
+    stmt = select(Alert).where(Alert.id == alert_id)
+    result = await db.execute(stmt)
+    alert = result.scalar_one_or_none()
+    if not alert:
+        return None
+    current_tags = list(alert.tags or [])
+    if tag not in current_tags:
+        current_tags.append(tag)
+        alert.tags = current_tags
+        alert.updated_at = datetime.now(UTC)
+        await db.flush()
+        await db.refresh(alert)
+    return alert
+
+
+async def remove_alert_tag(
+    db: AsyncSession, alert_id: str, tag: str
+) -> Alert | None:
+    """Remove a single tag from an alert."""
+    stmt = select(Alert).where(Alert.id == alert_id)
+    result = await db.execute(stmt)
+    alert = result.scalar_one_or_none()
+    if not alert:
+        return None
+    current_tags = list(alert.tags or [])
+    if tag in current_tags:
+        current_tags.remove(tag)
+        alert.tags = current_tags
+        alert.updated_at = datetime.now(UTC)
+        await db.flush()
+        await db.refresh(alert)
+    return alert
+
+
+# ─── Alert Notes ─────────────────────────────────────────
+
+
+async def get_alert_notes(
+    db: AsyncSession, alert_id: str
+) -> list[AlertNote]:
+    """Get all notes for an alert, newest first."""
+    stmt = (
+        select(AlertNote)
+        .where(AlertNote.alert_id == alert_id)
+        .order_by(AlertNote.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def create_alert_note(
+    db: AsyncSession, alert_id: str, text: str, author: str | None = None
+) -> AlertNote:
+    """Create a new note on an alert."""
+    import uuid as _uuid
+
+    # Verify alert exists
+    alert_stmt = select(Alert).where(Alert.id == alert_id)
+    alert_result = await db.execute(alert_stmt)
+    if not alert_result.scalar_one_or_none():
+        raise ValueError("Alert not found")
+
+    note = AlertNote(alert_id=_uuid.UUID(alert_id), text=text, author=author)
+    db.add(note)
+    await db.flush()
+    await db.refresh(note)
+    return note
+
+
+async def update_alert_note(
+    db: AsyncSession, note_id: str, text: str
+) -> AlertNote | None:
+    """Update the text of an existing note."""
+    stmt = select(AlertNote).where(AlertNote.id == note_id)
+    result = await db.execute(stmt)
+    note = result.scalar_one_or_none()
+    if not note:
+        return None
+    note.text = text
+    note.updated_at = datetime.now(UTC)
+    await db.flush()
+    await db.refresh(note)
+    return note
+
+
+async def delete_alert_note(
+    db: AsyncSession, note_id: str
+) -> bool:
+    """Delete a note. Returns True if found and deleted."""
+    stmt = select(AlertNote).where(AlertNote.id == note_id)
+    result = await db.execute(stmt)
+    note = result.scalar_one_or_none()
+    if not note:
+        return False
+    await db.delete(note)
+    await db.flush()
+    return True
 
 
 # ─── Stats ───────────────────────────────────────────────

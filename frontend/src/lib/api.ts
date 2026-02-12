@@ -1,4 +1,4 @@
-import type { Alert, AlertListResponse, Incident, IncidentDetail, IncidentListResponse } from './types';
+import type { Alert, AlertListResponse, AlertNote, AlertNoteListResponse, Incident, IncidentDetail, IncidentListResponse, SilenceWindow, SilenceWindowListResponse, NotificationChannel, NotificationChannelListResponse, NotificationLogListResponse } from './types';
 
 const API_BASE = '/api/v1';
 
@@ -72,6 +72,38 @@ export const api = {
     resolve(id: string) {
       return request<Alert>(`/alerts/${id}/resolve`, { method: 'POST' });
     },
+    // Tags
+    setTags(id: string, tags: string[]) {
+      return request<Alert>(`/alerts/${id}/tags`, {
+        method: 'PUT',
+        body: JSON.stringify({ tags }),
+      });
+    },
+    addTag(id: string, tag: string) {
+      return request<Alert>(`/alerts/${id}/tags/${encodeURIComponent(tag)}`, { method: 'POST' });
+    },
+    removeTag(id: string, tag: string) {
+      return request<Alert>(`/alerts/${id}/tags/${encodeURIComponent(tag)}`, { method: 'DELETE' });
+    },
+    // Notes
+    listNotes(alertId: string) {
+      return request<AlertNoteListResponse>(`/alerts/${alertId}/notes`);
+    },
+    addNote(alertId: string, text: string, author?: string) {
+      return request<AlertNote>(`/alerts/${alertId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ text, author }),
+      });
+    },
+    updateNote(noteId: string, text: string) {
+      return request<AlertNote>(`/alerts/notes/${noteId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ text }),
+      });
+    },
+    deleteNote(noteId: string) {
+      return fetch(`${API_BASE}/alerts/notes/${noteId}`, { method: 'DELETE' });
+    },
   },
 
   incidents: {
@@ -92,6 +124,42 @@ export const api = {
   stats: {
     get() {
       return request<DashboardStats>('/stats');
+    },
+  },
+
+  silences: {
+    list(params?: { state?: string; page?: number; page_size?: number }) {
+      return request<SilenceWindowListResponse>(`/silences${buildQuery(params || {})}`);
+    },
+    create(data: { name: string; matchers: Record<string, unknown>; starts_at: string; ends_at: string; created_by?: string; reason?: string }) {
+      return request<SilenceWindow>('/silences', { method: 'POST', body: JSON.stringify(data) });
+    },
+    update(id: string, data: Record<string, unknown>) {
+      return request<SilenceWindow>(`/silences/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    },
+    delete(id: string) {
+      return fetch(`${API_BASE}/silences/${id}`, { method: 'DELETE' });
+    },
+  },
+
+  notifications: {
+    listChannels(params?: { page?: number; page_size?: number }) {
+      return request<NotificationChannelListResponse>(`/notifications/channels${buildQuery(params || {})}`);
+    },
+    createChannel(data: { name: string; channel_type: string; config: Record<string, unknown>; filters?: Record<string, unknown> }) {
+      return request<NotificationChannel>('/notifications/channels', { method: 'POST', body: JSON.stringify(data) });
+    },
+    updateChannel(id: string, data: Record<string, unknown>) {
+      return request<NotificationChannel>(`/notifications/channels/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    },
+    deleteChannel(id: string) {
+      return fetch(`${API_BASE}/notifications/channels/${id}`, { method: 'DELETE' });
+    },
+    testChannel(id: string) {
+      return request<{ status: string; message: string }>(`/notifications/channels/${id}/test`, { method: 'POST' });
+    },
+    listLogs(params?: { channel_id?: string; incident_id?: string; page?: number; page_size?: number }) {
+      return request<NotificationLogListResponse>(`/notifications/logs${buildQuery(params || {})}`);
     },
   },
 };

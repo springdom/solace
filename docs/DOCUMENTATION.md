@@ -280,10 +280,23 @@ The stats bar below the toolbar shows:
 
 Click any incident or alert to open its detail panel on the right:
 
-- **Incident panel** — Shows severity, status, timing, correlated alerts (with expandable error details), timeline of events, and incident ID
-- **Alert panel** — Shows severity, status, timing, source info, labels, annotations, and links back to the source system
+- **Incident panel** — Shows severity, status, timing, correlated alerts (with expandable error details), timeline of events, and incident ID. Click any correlated alert to drill into its full detail view.
+- **Alert panel** — Shows severity, status, tags, timing, attributes table, labels, annotations, raw payload viewer, links, and investigation notes.
 
 Long error messages show a preview with a "Show more" button to expand the full text.
+
+### Alert Detail Panel
+
+Clicking an alert (either from the Alerts tab or from a correlated alert within an incident) opens the full alert detail panel:
+
+- **Tags** — Teal-colored pills for quick categorization. Add tags by typing in the input and pressing Enter. Remove tags by clicking the × on each pill. Tags are stored as JSONB in PostgreSQL with a GIN index for future filtering support.
+- **Timing** — When the alert started, duration, acknowledged/resolved timestamps.
+- **Attributes** — Compact table showing Source, Service, Host, Environment, Fingerprint, Duplicates, and ID.
+- **Labels** — Key=value metadata pills from the source system.
+- **Annotations** — Extended context like runbook URLs, dashboards.
+- **Raw Payload** — Collapsible JSON viewer showing the original webhook payload. Click to expand/collapse.
+- **Links** — Link back to the source system (generator URL).
+- **Notes** — Timestamped investigation notes. Add notes with optional author attribution. Notes support create, update, and delete. Displayed newest-first.
 
 ### Actions
 
@@ -316,6 +329,13 @@ Full interactive docs available at: `http://your-solace-host:8000/docs`
 | `GET` | `/alerts/{id}` | Get single alert by ID |
 | `POST` | `/alerts/{id}/acknowledge` | Acknowledge an alert |
 | `POST` | `/alerts/{id}/resolve` | Resolve an alert |
+| `PUT` | `/alerts/{id}/tags` | Replace all tags on an alert |
+| `POST` | `/alerts/{id}/tags/{tag}` | Add a single tag |
+| `DELETE` | `/alerts/{id}/tags/{tag}` | Remove a single tag |
+| `GET` | `/alerts/{id}/notes` | List notes for an alert |
+| `POST` | `/alerts/{id}/notes` | Add a note (body: `text`, optional `author`) |
+| `PUT` | `/alerts/notes/{note_id}` | Update a note |
+| `DELETE` | `/alerts/notes/{note_id}` | Delete a note |
 
 ### Incidents
 
@@ -437,9 +457,10 @@ Current test coverage: 95 tests covering webhook ingestion, normalization (gener
 
 ## Roadmap
 
-- Notification channels (Slack, email outbound from Solace)
-- Silence / maintenance windows (suppress alerts during deployments)
+- ~~Notification channels (Slack, email outbound from Solace)~~ ✅
+- ~~Silence / maintenance windows (suppress alerts during deployments)~~ ✅
+- ~~Grafana and Datadog normalizers~~ ✅
+- ~~Alert tagging and investigation notes~~ ✅
 - On-call scheduling and escalation policies
-- Grafana and Datadog normalizers
 - RBAC and multi-tenancy
 - Metrics and SLA reporting

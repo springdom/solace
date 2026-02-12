@@ -16,6 +16,8 @@ export interface Alert {
   host: string | null;
   labels: Record<string, string>;
   annotations: Record<string, string>;
+  tags: string[];
+  raw_payload: Record<string, unknown> | null;
   starts_at: string;
   ends_at: string | null;
   last_received_at: string;
@@ -33,6 +35,20 @@ export interface AlertListResponse {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface AlertNote {
+  id: string;
+  alert_id: string;
+  text: string;
+  author: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertNoteListResponse {
+  notes: AlertNote[];
+  total: number;
 }
 
 export interface IncidentAlertSummary {
@@ -77,6 +93,72 @@ export interface IncidentDetail extends Incident {
 
 export interface IncidentListResponse {
   incidents: Incident[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface SilenceWindow {
+  id: string;
+  name: string;
+  matchers: {
+    service?: string[];
+    severity?: string[];
+    labels?: Record<string, string>;
+  };
+  starts_at: string;
+  ends_at: string;
+  created_by: string | null;
+  reason: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SilenceWindowListResponse {
+  windows: SilenceWindow[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export type ChannelType = 'slack' | 'email';
+export type NotificationStatus = 'pending' | 'sent' | 'failed';
+
+export interface NotificationChannel {
+  id: string;
+  name: string;
+  channel_type: ChannelType;
+  config: Record<string, unknown>;
+  is_active: boolean;
+  filters: {
+    severity?: string[];
+    service?: string[];
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationChannelListResponse {
+  channels: NotificationChannel[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface NotificationLog {
+  id: string;
+  channel_id: string;
+  incident_id: string;
+  event_type: string;
+  status: NotificationStatus;
+  error_message: string | null;
+  sent_at: string | null;
+  created_at: string;
+}
+
+export interface NotificationLogListResponse {
+  logs: NotificationLog[];
   total: number;
   page: number;
   page_size: number;

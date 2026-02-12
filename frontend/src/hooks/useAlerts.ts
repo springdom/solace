@@ -76,5 +76,25 @@ export function useAlerts(opts: UseAlertsOptions = {}) {
     }
   }, []);
 
-  return { alerts, total, loading, error, acknowledge, resolve, refetch: fetchAlerts };
+  const addTag = useCallback(async (alertId: string, tag: string) => {
+    try {
+      const updated = await api.alerts.addTag(alertId, tag);
+      setAlerts(prev => prev.map(a => a.id === alertId ? updated : a));
+      return updated;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add tag');
+    }
+  }, []);
+
+  const removeTag = useCallback(async (alertId: string, tag: string) => {
+    try {
+      const updated = await api.alerts.removeTag(alertId, tag);
+      setAlerts(prev => prev.map(a => a.id === alertId ? updated : a));
+      return updated;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove tag');
+    }
+  }, []);
+
+  return { alerts, total, loading, error, acknowledge, resolve, addTag, removeTag, refetch: fetchAlerts };
 }

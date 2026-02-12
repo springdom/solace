@@ -18,6 +18,10 @@ Open-source alert management and incident response platform. Ingest alerts from 
 - **Full audit trail** — Every incident action (created, alert added, severity changed, acknowledged, resolved) is recorded as a timeline event.
 - **Auto-resolve** — When all alerts in an incident resolve, the incident auto-resolves.
 - **Dark ops-console dashboard** — Real-time React UI with incident/alert views, severity badges, detail panels, and one-click ack/resolve.
+- **Alert tagging** — Categorize alerts with free-form tags. Add/remove tags from the detail panel or via API. Stored as JSONB with GIN index.
+- **Investigation notes** — Add timestamped notes to alerts during investigation. Supports author attribution and full CRUD.
+- **Silence windows** — Suppress alerts during maintenance windows with service/severity matchers.
+- **Notification channels** — Configure Slack and email notification channels with severity/service filters.
 
 ## Architecture
 
@@ -70,7 +74,8 @@ curl -X POST http://localhost:8000/api/v1/webhooks/generic \
     "severity": "critical",
     "service": "payment-api",
     "host": "web-01",
-    "description": "CPU usage above 95% for 10 minutes"
+    "description": "CPU usage above 95% for 10 minutes",
+    "tags": ["production", "us-east-1"]
   }'
 
 # Prometheus Alertmanager
@@ -162,10 +167,21 @@ curl -X POST http://localhost:8000/api/v1/webhooks/generic \
 | `GET` | `/api/v1/alerts/{id}` | Get alert by ID |
 | `POST` | `/api/v1/alerts/{id}/acknowledge` | Acknowledge alert |
 | `POST` | `/api/v1/alerts/{id}/resolve` | Resolve alert |
+| `PUT` | `/api/v1/alerts/{id}/tags` | Replace all tags |
+| `POST` | `/api/v1/alerts/{id}/tags/{tag}` | Add a tag |
+| `DELETE` | `/api/v1/alerts/{id}/tags/{tag}` | Remove a tag |
+| `GET` | `/api/v1/alerts/{id}/notes` | List notes |
+| `POST` | `/api/v1/alerts/{id}/notes` | Add a note |
+| `PUT` | `/api/v1/alerts/notes/{id}` | Update a note |
+| `DELETE` | `/api/v1/alerts/notes/{id}` | Delete a note |
 | `GET` | `/api/v1/incidents` | List incidents (filterable) |
 | `GET` | `/api/v1/incidents/{id}` | Get incident with alerts + events |
 | `POST` | `/api/v1/incidents/{id}/acknowledge` | Acknowledge incident + all alerts |
 | `POST` | `/api/v1/incidents/{id}/resolve` | Resolve incident + all alerts |
+| `GET` | `/api/v1/silences` | List silence windows |
+| `POST` | `/api/v1/silences` | Create silence window |
+| `GET` | `/api/v1/notifications/channels` | List notification channels |
+| `POST` | `/api/v1/notifications/channels` | Create notification channel |
 
 ## Configuration
 
@@ -213,14 +229,16 @@ cd frontend && npm install && npm run dev
 
 ## Roadmap
 
-- [ ] Grafana normalizer
-- [ ] Datadog normalizer
+- [x] Grafana normalizer
+- [x] Datadog normalizer
+- [x] Notification channels (Slack, email)
+- [x] Silence / maintenance windows
+- [x] Alert tagging and investigation notes
+- [x] Metrics and SLA tracking (MTTA, MTTR)
 - [ ] On-call scheduling and escalation policies
-- [ ] Notification channels (Slack, email, PagerDuty bridge)
-- [ ] Silence / maintenance windows
 - [ ] RBAC and multi-tenancy
 - [ ] Topology-aware correlation (service dependency graph)
-- [ ] Metrics and SLA tracking (MTTA, MTTR)
+- [ ] PagerDuty bridge
 
 ## License
 

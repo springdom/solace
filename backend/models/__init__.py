@@ -66,6 +66,7 @@ class Alert(Base):
     host: Mapped[str | None] = mapped_column(String(255))
     labels: Mapped[dict] = mapped_column(JSONB, default=dict)
     annotations: Mapped[dict] = mapped_column(JSONB, default=dict)
+    tags: Mapped[list] = mapped_column(JSONB, default=list)
     raw_payload: Mapped[dict | None] = mapped_column(JSONB)
     starts_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -85,6 +86,10 @@ class Alert(Base):
         UUID(as_uuid=True), ForeignKey("incidents.id")
     )
     incident: Mapped["Incident | None"] = relationship(back_populates="alerts")
+    notes: Mapped[list["AlertNote"]] = relationship(
+        back_populates="alert", order_by="AlertNote.created_at.desc()",
+        cascade="all, delete-orphan",
+    )
 
     # ── Timestamps ───────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
@@ -102,10 +107,46 @@ class Alert(Base):
         Index("idx_alerts_created_at", "created_at"),
         Index("idx_alerts_fingerprint_status", "fingerprint", "status"),
         Index("idx_alerts_labels", "labels", postgresql_using="gin"),
+        Index("idx_alerts_tags", "tags", postgresql_using="gin"),
     )
 
     def __repr__(self) -> str:
         return f"<Alert {self.name} [{self.severity.value}] {self.status.value}>"
+
+
+# ─── Alert Note ──────────────────────────────────────────
+
+
+class AlertNote(Base):
+    __tablename__ = "alert_notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    alert_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    author: Mapped[str | None] = mapped_column(String(255))
+
+    # ── Relationships ────────────────────────────────────
+    alert: Mapped["Alert"] = relationship(back_populates="notes")
+
+    # ── Timestamps ───────────────────────────────────────
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_alert_notes_alert_id", "alert_id"),
+        Index("idx_alert_notes_created_at", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AlertNote {str(self.id)[:8]} on alert {str(self.alert_id)[:8]}>"
 
 
 # ─── Incident ────────────────────────────────────────────
@@ -209,3 +250,110 @@ class Integration(Base):
 
     def __repr__(self) -> str:
         return f"<Integration {self.name} ({self.provider})>"
+
+
+# ─── Silence Window (Maintenance Windows) ─────────────────
+
+
+class SilenceWindow(Base):
+    __tablename__ = "silence_windows"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    matchers: Mapped[dict] = mapped_column(JSONB, default=dict)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(255))
+    reason: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_silence_windows_active", "is_active", "starts_at", "ends_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SilenceWindow {self.name} ({self.starts_at} - {self.ends_at})>"
+
+
+# ─── Notification Channel ────────────────────────────────
+
+
+class ChannelType(enum.StrEnum):
+    SLACK = "slack"
+    EMAIL = "email"
+
+
+class NotificationStatus(enum.StrEnum):
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class NotificationChannel(Base):
+    __tablename__ = "notification_channels"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    channel_type: Mapped[ChannelType] = mapped_column(
+        Enum(ChannelType), nullable=False
+    )
+    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    filters: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    logs: Mapped[list["NotificationLog"]] = relationship(back_populates="channel")
+
+    def __repr__(self) -> str:
+        return f"<NotificationChannel {self.name} ({self.channel_type.value})>"
+
+
+class NotificationLog(Base):
+    __tablename__ = "notification_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    channel_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("notification_channels.id"), nullable=False
+    )
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("incidents.id"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[NotificationStatus] = mapped_column(
+        Enum(NotificationStatus), nullable=False, default=NotificationStatus.PENDING
+    )
+    error_message: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    channel: Mapped["NotificationChannel"] = relationship(back_populates="logs")
+
+    __table_args__ = (
+        Index("idx_notification_logs_channel_incident", "channel_id", "incident_id"),
+        Index("idx_notification_logs_created_at", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<NotificationLog {self.event_type} [{self.status.value}]>"

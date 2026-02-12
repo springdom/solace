@@ -16,6 +16,7 @@ Future enhancements:
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -33,6 +34,15 @@ from backend.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CorrelationResult:
+    """Result of correlating an alert to an incident."""
+    incident: Incident | None
+    # "incident_created", "alert_added", "severity_changed", "incident_auto_resolved"
+    event_type: str
+
 
 # Severity ordering for promotion (higher index = more severe)
 SEVERITY_ORDER = [
@@ -102,26 +112,33 @@ async def find_matching_incident(
 async def correlate_alert(
     db: AsyncSession,
     alert: Alert,
-) -> Incident:
+) -> CorrelationResult:
     """Correlate an alert with an existing or new incident.
 
     If a matching incident exists, the alert is attached to it and the
     incident severity is promoted if needed. Otherwise, a new incident
     is created.
 
-    Returns the incident the alert was correlated to.
+    Returns a CorrelationResult with the incident and what happened.
     """
     # Skip correlation for already-resolved alerts
     if alert.status == AlertStatus.RESOLVED:
-        return await _handle_resolved_alert(db, alert)
+        incident = await _handle_resolved_alert(db, alert)
+        return CorrelationResult(incident=incident, event_type="incident_auto_resolved")
 
     # Try to find an existing incident
     incident = await find_matching_incident(db, alert)
 
     if incident:
-        return await _attach_to_incident(db, alert, incident)
+        # Check if severity will change
+        old_severity = incident.severity
+        result_incident = await _attach_to_incident(db, alert, incident)
+        severity_changed = result_incident.severity != old_severity
+        event_type = "severity_changed" if severity_changed else "alert_added"
+        return CorrelationResult(incident=result_incident, event_type=event_type)
     else:
-        return await _create_incident(db, alert)
+        new_incident = await _create_incident(db, alert)
+        return CorrelationResult(incident=new_incident, event_type="incident_created")
 
 
 async def _attach_to_incident(

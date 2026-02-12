@@ -54,6 +54,22 @@ export function AlertRow({ alert, selected, onSelect, onAcknowledge, onResolve }
           {alert.host && (
             <span className="text-xs text-solace-muted font-mono">{alert.host}</span>
           )}
+          {alert.tags.length > 0 && (
+            <>
+              {(alert.service || alert.host) && <span className="text-solace-border">·</span>}
+              {alert.tags.slice(0, 3).map(tag => (
+                <span
+                  key={tag}
+                  className="px-1.5 py-0 rounded-full bg-teal-500/10 text-teal-400 text-[10px] font-mono border border-teal-500/20 truncate max-w-[80px]"
+                >
+                  {tag}
+                </span>
+              ))}
+              {alert.tags.length > 3 && (
+                <span className="text-[10px] text-solace-muted font-mono">+{alert.tags.length - 3}</span>
+              )}
+            </>
+          )}
         </div>
       </div>
 

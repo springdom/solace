@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ─── Enums (mirroring SQLAlchemy but for API layer) ──────
 
@@ -53,6 +53,9 @@ class GenericWebhookPayload(BaseModel):
     annotations: dict = Field(
         default_factory=dict, description="Additional context (runbook URL, etc)"
     )
+    tags: list[str] = Field(
+        default_factory=list, description="Simple string tags for categorization"
+    )
     source: str = Field(default="generic", description="Source system identifier", max_length=100)
     source_instance: str | None = Field(default=None, description="Specific source instance URL")
     starts_at: datetime | None = Field(default=None, description="When the alert started firing")
@@ -83,6 +86,8 @@ class AlertResponse(BaseModel):
     host: str | None
     labels: dict
     annotations: dict
+    tags: list[str] = []
+    raw_payload: dict | None = None
     starts_at: datetime
     ends_at: datetime | None
     last_received_at: datetime
@@ -112,6 +117,59 @@ class AlertAckRequest(BaseModel):
     acknowledged_by: str | None = Field(
         default=None, description="User or system that acknowledged"
     )
+
+
+# ─── Alert Tags ─────────────────────────────────────────
+
+
+class AlertTagsUpdate(BaseModel):
+    """Set the full list of tags on an alert."""
+
+    tags: list[str] = Field(..., description="Complete list of tags")
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        result: list[str] = []
+        for tag in v:
+            t = tag.strip()
+            if t and t not in seen:
+                seen.add(t)
+                result.append(t)
+        return result
+
+
+# ─── Alert Notes ────────────────────────────────────────
+
+
+class AlertNoteCreate(BaseModel):
+    """Create a note on an alert."""
+
+    text: str = Field(..., min_length=1, max_length=5000, description="Note text content")
+    author: str | None = Field(default=None, max_length=255, description="Author name")
+
+
+class AlertNoteUpdate(BaseModel):
+    """Update an existing note."""
+
+    text: str = Field(..., min_length=1, max_length=5000)
+
+
+class AlertNoteResponse(BaseModel):
+    id: uuid.UUID
+    alert_id: uuid.UUID
+    text: str
+    author: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AlertNoteListResponse(BaseModel):
+    notes: list[AlertNoteResponse]
+    total: int
 
 
 # ─── Incident Responses ──────────────────────────────────
@@ -221,3 +279,129 @@ class WebhookAcceptedResponse(BaseModel):
     is_duplicate: bool = False
     duplicate_count: int = 1
     incident_id: uuid.UUID | None = None
+
+
+# ─── Silence Windows ───────────────────────────────────────
+
+
+def _normalize_matchers(matchers: dict) -> dict:
+    """Ensure matcher values like service/severity are always lists."""
+    for key in ("service", "severity"):
+        val = matchers.get(key)
+        if isinstance(val, str):
+            matchers[key] = [val]
+    return matchers
+
+
+class SilenceWindowCreate(BaseModel):
+    name: str = Field(..., max_length=255)
+    matchers: dict = Field(default_factory=dict)
+    starts_at: datetime
+    ends_at: datetime
+    created_by: str | None = Field(default=None, max_length=255)
+    reason: str | None = None
+
+    @field_validator("matchers")
+    @classmethod
+    def normalize_matchers(cls, v: dict) -> dict:
+        return _normalize_matchers(v)
+
+
+class SilenceWindowUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    matchers: dict | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    is_active: bool | None = None
+    reason: str | None = None
+
+    @field_validator("matchers")
+    @classmethod
+    def normalize_matchers(cls, v: dict | None) -> dict | None:
+        if v is not None:
+            return _normalize_matchers(v)
+        return v
+
+
+class SilenceWindowResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    matchers: dict
+    starts_at: datetime
+    ends_at: datetime
+    created_by: str | None
+    reason: str | None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("matchers")
+    @classmethod
+    def normalize_matchers(cls, v: dict) -> dict:
+        return _normalize_matchers(v)
+
+
+class SilenceWindowListResponse(BaseModel):
+    windows: list[SilenceWindowResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+# ─── Notification Channels ─────────────────────────────────
+
+
+class NotificationChannelCreate(BaseModel):
+    name: str = Field(..., max_length=255)
+    channel_type: str = Field(..., description="slack or email")
+    config: dict = Field(default_factory=dict)
+    filters: dict = Field(default_factory=dict)
+
+
+class NotificationChannelUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=255)
+    config: dict | None = None
+    is_active: bool | None = None
+    filters: dict | None = None
+
+
+class NotificationChannelResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    channel_type: str
+    config: dict
+    is_active: bool
+    filters: dict
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationChannelListResponse(BaseModel):
+    channels: list[NotificationChannelResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class NotificationLogResponse(BaseModel):
+    id: uuid.UUID
+    channel_id: uuid.UUID
+    incident_id: uuid.UUID
+    event_type: str
+    status: str
+    error_message: str | None
+    sent_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NotificationLogListResponse(BaseModel):
+    logs: list[NotificationLogResponse]
+    total: int
+    page: int
+    page_size: int

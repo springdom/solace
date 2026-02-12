@@ -12,6 +12,7 @@ interface IncidentDetailProps {
   onAcknowledge: (id: string) => void;
   onResolve: (id: string) => void;
   onClose: () => void;
+  onAlertSelect?: (alertId: string) => void;
 }
 
 const EVENT_ICONS: Record<string, string> = {
@@ -23,18 +24,19 @@ const EVENT_ICONS: Record<string, string> = {
   incident_auto_resolved: '🤖',
 };
 
-function AlertCard({ alert }: { alert: import('../lib/types').IncidentAlertSummary }) {
+function AlertCard({ alert, onSelect }: { alert: import('../lib/types').IncidentAlertSummary; onSelect?: (alertId: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const hasDesc = alert.description && alert.description.length > 0;
 
   return (
     <div
-      className="px-3 py-2 rounded-md bg-solace-bg/60 border border-solace-border/50"
+      onClick={() => onSelect?.(alert.id)}
+      className={`group px-3 py-2 rounded-md bg-solace-bg/60 border border-solace-border/50 ${onSelect ? 'cursor-pointer hover:border-blue-500/40 hover:bg-solace-bg/80 transition-colors' : ''}`}
     >
       <div className="flex items-center gap-2">
         <SeverityBadge severity={alert.severity} />
         <div className="flex-1 min-w-0">
-          <span className="text-sm font-mono text-solace-bright truncate block">
+          <span className="text-sm font-mono text-solace-bright truncate block group-hover:text-blue-400 transition-colors">
             {alert.name}
           </span>
           <span className="text-[11px] text-solace-muted font-mono">
@@ -46,6 +48,13 @@ function AlertCard({ alert }: { alert: import('../lib/types').IncidentAlertSumma
           <span className="px-1.5 py-0.5 rounded bg-solace-border text-[10px] font-mono text-solace-muted">
             ×{alert.duplicate_count}
           </span>
+        )}
+        {onSelect && (
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2"
+            className="flex-shrink-0 text-solace-muted/0 group-hover:text-blue-400 transition-colors"
+          >
+            <path d="M6 4l4 4-4 4" />
+          </svg>
         )}
       </div>
       {hasDesc && (
@@ -76,7 +85,7 @@ function AlertCard({ alert }: { alert: import('../lib/types').IncidentAlertSumma
   );
 }
 
-export function IncidentDetail({ incident, onAcknowledge, onResolve, onClose }: IncidentDetailProps) {
+export function IncidentDetail({ incident, onAcknowledge, onResolve, onClose, onAlertSelect }: IncidentDetailProps) {
   const [detail, setDetail] = useState<IncidentDetailType | null>(null);
   const isOpen = incident.status === 'open';
   const isActive = isOpen || incident.status === 'acknowledged';
@@ -158,7 +167,7 @@ export function IncidentDetail({ incident, onAcknowledge, onResolve, onClose }: 
           </h3>
           <div className="space-y-1">
             {alerts.map(alert => (
-              <AlertCard key={alert.id} alert={alert} />
+              <AlertCard key={alert.id} alert={alert} onSelect={onAlertSelect} />
             ))}
           </div>
         </section>

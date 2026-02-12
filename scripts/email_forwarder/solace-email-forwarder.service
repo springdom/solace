@@ -1,0 +1,26 @@
+[Unit]
+Description=Solace Email Forwarder
+Documentation=https://github.com/your-org/solace
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=solace
+Group=solace
+WorkingDirectory=/opt/solace/email-forwarder
+ExecStart=/opt/solace/email-forwarder/venv/bin/python forwarder.py
+Restart=always
+RestartSec=10
+
+# Environment file with IMAP and Solace credentials
+EnvironmentFile=/etc/solace/email-forwarder.env
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

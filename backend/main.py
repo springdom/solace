@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes import alerts, health, incidents, stats, webhooks
+from backend.api.routes import alerts, health, incidents, notifications, silences, stats, webhooks
 from backend.config import get_settings
 
 settings = get_settings()
@@ -48,6 +48,8 @@ app.include_router(webhooks.router, prefix=settings.api_prefix)
 app.include_router(alerts.router, prefix=settings.api_prefix)
 app.include_router(incidents.router, prefix=settings.api_prefix)
 app.include_router(stats.router, prefix=settings.api_prefix)
+app.include_router(silences.router, prefix=settings.api_prefix)
+app.include_router(notifications.router, prefix=settings.api_prefix)
 
 
 # ─── Startup / Shutdown ──────────────────────────────────
