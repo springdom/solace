@@ -1,0 +1,211 @@
+import enum
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from backend.database import Base
+
+# ─── Enums ───────────────────────────────────────────────
+
+
+class AlertStatus(enum.StrEnum):
+    FIRING = "firing"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+    SUPPRESSED = "suppressed"
+
+
+class Severity(enum.StrEnum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    WARNING = "warning"
+    LOW = "low"
+    INFO = "info"
+
+
+class IncidentStatus(enum.StrEnum):
+    OPEN = "open"
+    ACKNOWLEDGED = "acknowledged"
+    RESOLVED = "resolved"
+
+
+# ─── Alert ───────────────────────────────────────────────
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    source_instance: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[AlertStatus] = mapped_column(
+        Enum(AlertStatus), nullable=False, default=AlertStatus.FIRING
+    )
+    severity: Mapped[Severity] = mapped_column(
+        Enum(Severity), nullable=False, default=Severity.WARNING
+    )
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    service: Mapped[str | None] = mapped_column(String(255))
+    environment: Mapped[str | None] = mapped_column(String(100))
+    host: Mapped[str | None] = mapped_column(String(255))
+    labels: Mapped[dict] = mapped_column(JSONB, default=dict)
+    annotations: Mapped[dict] = mapped_column(JSONB, default=dict)
+    raw_payload: Mapped[dict | None] = mapped_column(JSONB)
+    starts_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    acknowledged_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duplicate_count: Mapped[int] = mapped_column(Integer, default=1)
+    generator_url: Mapped[str | None] = mapped_column(Text)
+
+    # ── Relationships ────────────────────────────────────
+    incident_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("incidents.id")
+    )
+    incident: Mapped["Incident | None"] = relationship(back_populates="alerts")
+
+    # ── Timestamps ───────────────────────────────────────
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    # ── Indexes ──────────────────────────────────────────
+    __table_args__ = (
+        Index("idx_alerts_status", "status"),
+        Index("idx_alerts_severity", "severity"),
+        Index("idx_alerts_service", "service"),
+        Index("idx_alerts_created_at", "created_at"),
+        Index("idx_alerts_fingerprint_status", "fingerprint", "status"),
+        Index("idx_alerts_labels", "labels", postgresql_using="gin"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Alert {self.name} [{self.severity.value}] {self.status.value}>"
+
+
+# ─── Incident ────────────────────────────────────────────
+
+
+class Incident(Base):
+    __tablename__ = "incidents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    status: Mapped[IncidentStatus] = mapped_column(
+        Enum(IncidentStatus), nullable=False, default=IncidentStatus.OPEN
+    )
+    severity: Mapped[Severity] = mapped_column(
+        Enum(Severity), nullable=False, default=Severity.WARNING
+    )
+    summary: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+    # ── Relationships ────────────────────────────────────
+    alerts: Mapped[list["Alert"]] = relationship(back_populates="incident")
+    events: Mapped[list["IncidentEvent"]] = relationship(
+        back_populates="incident", order_by="IncidentEvent.created_at"
+    )
+
+    # ── Timestamps ───────────────────────────────────────
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        Index("idx_incidents_status", "status"),
+        Index("idx_incidents_severity", "severity"),
+        Index("idx_incidents_started_at", "started_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Incident {self.title} [{self.status.value}]>"
+
+
+# ─── Incident Event (Audit Trail) ────────────────────────
+
+
+class IncidentEvent(Base):
+    __tablename__ = "incident_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("incidents.id"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    actor: Mapped[str | None] = mapped_column(String(255))
+    event_data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    # ── Relationships ────────────────────────────────────
+    incident: Mapped["Incident"] = relationship(back_populates="events")
+
+    # ── Timestamps ───────────────────────────────────────
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<IncidentEvent {self.event_type} on {self.incident_id}>"
+
+
+# ─── Integration (Configured alert sources) ──────────────
+
+
+class Integration(Base):
+    __tablename__ = "integrations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)  # generic, prometheus, etc
+    api_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<Integration {self.name} ({self.provider})>"

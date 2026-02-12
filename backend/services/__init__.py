@@ -1,0 +1,442 @@
+import logging
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from backend.core.correlation import correlate_alert
+from backend.core.dedup import find_duplicate, process_duplicate
+from backend.core.fingerprint import generate_fingerprint
+from backend.integrations import NormalizedAlert
+from backend.models import (
+    Alert,
+    AlertStatus,
+    Incident,
+    IncidentEvent,
+    IncidentStatus,
+    Severity,
+)
+
+logger = logging.getLogger(__name__)
+
+
+async def ingest_alert(
+    db: AsyncSession,
+    normalized: NormalizedAlert,
+) -> tuple[Alert, bool]:
+    """Process a normalized alert through the ingestion pipeline.
+
+    Pipeline:
+    1. Generate fingerprint
+    2. Check for duplicates
+    3. If duplicate: increment counter, update timestamp
+    4. If new: create alert record
+
+    Returns:
+        Tuple of (alert, is_duplicate)
+    """
+    # Step 1: Generate fingerprint
+    fingerprint = generate_fingerprint(
+        source=normalized.source,
+        name=normalized.name,
+        service=normalized.service,
+        host=normalized.host,
+        labels=normalized.labels,
+    )
+
+    # Step 2: Check for existing duplicate
+    existing = await find_duplicate(db, fingerprint)
+
+    if existing:
+        # Step 3a: Update existing alert
+        updated = await process_duplicate(db, existing)
+        logger.info(
+            f"Duplicate alert: {normalized.name} (fingerprint={fingerprint}, "
+            f"count={updated.duplicate_count})"
+        )
+        return updated, True
+
+    # Step 3b: Create new alert
+    alert = Alert(
+        fingerprint=fingerprint,
+        source=normalized.source,
+        source_instance=normalized.source_instance,
+        status=AlertStatus(normalized.status),
+        severity=Severity(normalized.severity),
+        name=normalized.name,
+        description=normalized.description,
+        service=normalized.service,
+        environment=normalized.environment,
+        host=normalized.host,
+        labels=normalized.labels,
+        annotations=normalized.annotations,
+        raw_payload=normalized.raw_payload,
+        starts_at=normalized.starts_at or datetime.now(UTC),
+        ends_at=normalized.ends_at,
+        generator_url=normalized.generator_url,
+        last_received_at=datetime.now(UTC),
+    )
+
+    # Handle resolved status from source
+    if normalized.status == "resolved" and normalized.ends_at:
+        alert.resolved_at = normalized.ends_at
+
+    db.add(alert)
+    await db.flush()
+    await db.refresh(alert)
+
+    # Step 4: Correlate to an incident
+    incident = await correlate_alert(db, alert)
+
+    logger.info(
+        f"New alert: {normalized.name} (fingerprint={fingerprint}, "
+        f"severity={normalized.severity}, id={alert.id}"
+        f"{f', incident={str(incident.id)[:8]}' if incident else ''})"
+    )
+
+    return alert, False
+
+
+async def get_alerts(
+    db: AsyncSession,
+    status: str | None = None,
+    severity: str | None = None,
+    service: str | None = None,
+    search: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[Alert], int]:
+    """Fetch alerts with optional filtering, search, sorting, and pagination."""
+    query = select(Alert)
+    count_query = select(func.count(Alert.id))
+
+    # Apply filters
+    if status:
+        query = query.where(Alert.status == AlertStatus(status))
+        count_query = count_query.where(Alert.status == AlertStatus(status))
+    if severity:
+        query = query.where(Alert.severity == Severity(severity))
+        count_query = count_query.where(Alert.severity == Severity(severity))
+    if service:
+        query = query.where(Alert.service == service)
+        count_query = count_query.where(Alert.service == service)
+
+    # Text search across name, service, host, description
+    if search:
+        pattern = f"%{search}%"
+        search_filter = or_(
+            Alert.name.ilike(pattern),
+            Alert.service.ilike(pattern),
+            Alert.host.ilike(pattern),
+            Alert.description.ilike(pattern),
+            Alert.fingerprint.ilike(pattern),
+        )
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
+    # Get total count
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Sorting
+    sort_columns = {
+        "created_at": Alert.created_at,
+        "severity": Alert.severity,
+        "name": Alert.name,
+        "service": Alert.service,
+        "status": Alert.status,
+        "starts_at": Alert.starts_at,
+        "last_received_at": Alert.last_received_at,
+        "duplicate_count": Alert.duplicate_count,
+    }
+    sort_col = sort_columns.get(sort_by, Alert.created_at)
+    order = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+    # Apply pagination and ordering
+    query = (
+        query.order_by(order)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+
+    result = await db.execute(query)
+    alerts = list(result.scalars().all())
+
+    return alerts, total
+
+
+async def acknowledge_alert(
+    db: AsyncSession,
+    alert_id: str,
+    acknowledged_by: str | None = None,
+) -> Alert | None:
+    """Mark an alert as acknowledged."""
+    stmt = select(Alert).where(Alert.id == alert_id)
+    result = await db.execute(stmt)
+    alert = result.scalar_one_or_none()
+
+    if not alert:
+        return None
+
+    now = datetime.now(UTC)
+    alert.status = AlertStatus.ACKNOWLEDGED
+    alert.acknowledged_at = now
+    alert.updated_at = now
+    await db.flush()
+    await db.refresh(alert)
+    return alert
+
+
+async def resolve_alert(
+    db: AsyncSession,
+    alert_id: str,
+) -> Alert | None:
+    """Mark an alert as resolved."""
+    stmt = select(Alert).where(Alert.id == alert_id)
+    result = await db.execute(stmt)
+    alert = result.scalar_one_or_none()
+
+    if not alert:
+        return None
+
+    now = datetime.now(UTC)
+    alert.status = AlertStatus.RESOLVED
+    alert.resolved_at = now
+    alert.ends_at = now
+    alert.updated_at = now
+    await db.flush()
+    await db.refresh(alert)
+    return alert
+
+
+# ─── Incident Services ──────────────────────────────────
+
+
+async def get_incidents(
+    db: AsyncSession,
+    status: str | None = None,
+    search: str | None = None,
+    sort_by: str = "started_at",
+    sort_order: str = "desc",
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[Incident], int]:
+    """Fetch incidents with optional filtering, search, sorting, and pagination."""
+    query = select(Incident).options(selectinload(Incident.alerts))
+    count_query = select(func.count(Incident.id))
+
+    if status:
+        query = query.where(Incident.status == IncidentStatus(status))
+        count_query = count_query.where(Incident.status == IncidentStatus(status))
+
+    if search:
+        pattern = f"%{search}%"
+        search_filter = or_(
+            Incident.title.ilike(pattern),
+            Incident.summary.ilike(pattern),
+        )
+        query = query.where(search_filter)
+        count_query = count_query.where(search_filter)
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    # Sorting
+    sort_columns = {
+        "started_at": Incident.started_at,
+        "severity": Incident.severity,
+        "title": Incident.title,
+        "status": Incident.status,
+        "created_at": Incident.created_at,
+    }
+    sort_col = sort_columns.get(sort_by, Incident.started_at)
+    order = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+    query = (
+        query.order_by(order)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+
+    result = await db.execute(query)
+    incidents = list(result.unique().scalars().all())
+
+    return incidents, total
+
+
+async def get_incident(
+    db: AsyncSession,
+    incident_id: str,
+) -> Incident | None:
+    """Fetch a single incident with alerts and events."""
+    stmt = (
+        select(Incident)
+        .where(Incident.id == incident_id)
+        .options(
+            selectinload(Incident.alerts),
+            selectinload(Incident.events),
+        )
+    )
+    result = await db.execute(stmt)
+    return result.unique().scalar_one_or_none()
+
+
+async def acknowledge_incident(
+    db: AsyncSession,
+    incident_id: str,
+    acknowledged_by: str | None = None,
+) -> Incident | None:
+    """Acknowledge an incident and all its firing alerts."""
+    incident = await get_incident(db, incident_id)
+    if not incident:
+        return None
+
+    now = datetime.now(UTC)
+    incident.status = IncidentStatus.ACKNOWLEDGED
+    incident.acknowledged_at = now
+    incident.updated_at = now
+
+    # Acknowledge all firing alerts
+    for alert in incident.alerts:
+        if alert.status == AlertStatus.FIRING:
+            alert.status = AlertStatus.ACKNOWLEDGED
+            alert.acknowledged_at = now
+            alert.updated_at = now
+
+    event = IncidentEvent(
+        incident_id=incident.id,
+        event_type="incident_acknowledged",
+        description=f"Incident acknowledged{f' by {acknowledged_by}' if acknowledged_by else ''}",
+        actor=acknowledged_by or "system",
+        event_data={
+            "alerts_acknowledged": len(
+                [a for a in incident.alerts if a.acknowledged_at == now]
+            )
+        },
+    )
+    db.add(event)
+
+    await db.flush()
+    await db.refresh(incident)
+    return incident
+
+
+async def resolve_incident(
+    db: AsyncSession,
+    incident_id: str,
+    resolved_by: str | None = None,
+) -> Incident | None:
+    """Resolve an incident and all its active alerts."""
+    incident = await get_incident(db, incident_id)
+    if not incident:
+        return None
+
+    now = datetime.now(UTC)
+    incident.status = IncidentStatus.RESOLVED
+    incident.resolved_at = now
+    incident.updated_at = now
+
+    # Resolve all active alerts
+    resolved_count = 0
+    for alert in incident.alerts:
+        if alert.status in (AlertStatus.FIRING, AlertStatus.ACKNOWLEDGED):
+            alert.status = AlertStatus.RESOLVED
+            alert.resolved_at = now
+            alert.ends_at = now
+            alert.updated_at = now
+            resolved_count += 1
+
+    event = IncidentEvent(
+        incident_id=incident.id,
+        event_type="incident_resolved",
+        description=f"Incident resolved{f' by {resolved_by}' if resolved_by else ''}",
+        actor=resolved_by or "system",
+        event_data={"alerts_resolved": resolved_count},
+    )
+    db.add(event)
+
+    await db.flush()
+    await db.refresh(incident)
+    return incident
+
+
+# ─── Stats ───────────────────────────────────────────────
+
+
+async def get_stats(db: AsyncSession) -> dict:
+    """Get dashboard statistics: counts, MTTA, MTTR."""
+    now = datetime.now(UTC)
+
+    # Alert counts by status
+    status_counts = {}
+    for s in AlertStatus:
+        result = await db.execute(
+            select(func.count(Alert.id)).where(Alert.status == s)
+        )
+        status_counts[s.value] = result.scalar() or 0
+
+    # Severity counts (active only)
+    severity_counts = {}
+    active_statuses = [AlertStatus.FIRING, AlertStatus.ACKNOWLEDGED]
+    for sev in Severity:
+        result = await db.execute(
+            select(func.count(Alert.id)).where(
+                Alert.status.in_(active_statuses),
+                Alert.severity == sev,
+            )
+        )
+        severity_counts[sev.value] = result.scalar() or 0
+
+    # Incident counts by status
+    incident_counts = {}
+    for s in IncidentStatus:
+        result = await db.execute(
+            select(func.count(Incident.id)).where(Incident.status == s)
+        )
+        incident_counts[s.value] = result.scalar() or 0
+
+    # MTTA: Mean Time to Acknowledge (for alerts acknowledged in last 24h)
+    mtta_result = await db.execute(
+        select(
+            func.avg(
+                func.extract("epoch", Alert.acknowledged_at)
+                - func.extract("epoch", Alert.starts_at)
+            )
+        ).where(
+            Alert.acknowledged_at.is_not(None),
+            Alert.acknowledged_at >= now - timedelta(hours=24),
+        )
+    )
+    mtta_seconds = mtta_result.scalar()
+
+    # MTTR: Mean Time to Resolve (for alerts resolved in last 24h)
+    mttr_result = await db.execute(
+        select(
+            func.avg(
+                func.extract("epoch", Alert.resolved_at)
+                - func.extract("epoch", Alert.starts_at)
+            )
+        ).where(
+            Alert.resolved_at.is_not(None),
+            Alert.resolved_at >= now - timedelta(hours=24),
+        )
+    )
+    mttr_seconds = mttr_result.scalar()
+
+    return {
+        "alerts": {
+            "by_status": status_counts,
+            "by_severity": severity_counts,
+            "total": sum(status_counts.values()),
+            "active": status_counts.get("firing", 0) + status_counts.get("acknowledged", 0),
+        },
+        "incidents": {
+            "by_status": incident_counts,
+            "total": sum(incident_counts.values()),
+        },
+        "mtta_seconds": round(mtta_seconds, 1) if mtta_seconds else None,
+        "mttr_seconds": round(mttr_seconds, 1) if mttr_seconds else None,
+    }

@@ -1,0 +1,8 @@
+frontend/
+.pytest_cache/
+solace.egg-info/
+test_integration.sh
+__pycache__/
+*.pyc
+.env
+.git/

@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  background: #0a0e14;
+  color: #c5cdd8;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e2736;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3d4f65;
+}
+
+/* Severity pulse for firing critical alerts */
+@keyframes severity-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
+}
+.severity-pulse-critical {
+  animation: severity-pulse 2s ease-in-out infinite;
+}

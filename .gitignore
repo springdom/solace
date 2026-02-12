@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+
+# Testing
+htmlcov/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Docker
+postgres_data/
+redis_data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend)
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
