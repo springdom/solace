@@ -306,7 +306,8 @@ class NotificationChannel(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     channel_type: Mapped[ChannelType] = mapped_column(
-        Enum(ChannelType), nullable=False
+        Enum(ChannelType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
     )
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -339,7 +340,9 @@ class NotificationLog(Base):
     )
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[NotificationStatus] = mapped_column(
-        Enum(NotificationStatus), nullable=False, default=NotificationStatus.PENDING
+        Enum(NotificationStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=NotificationStatus.PENDING,
     )
     error_message: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

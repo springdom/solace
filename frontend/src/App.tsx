@@ -1,8 +1,10 @@
-import { useState, useMemo, useCallback } from 'react';
-import type { Alert, Incident, Severity } from './lib/types';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import type { Severity } from './lib/types';
 import { api } from './lib/api';
-import { useAlerts } from './hooks/useAlerts';
-import { useIncidents } from './hooks/useIncidents';
+import { useAlertStore } from './stores/alertStore';
+import { useIncidentStore } from './stores/incidentStore';
+import { useStatsStore } from './stores/statsStore';
+import { useWSStore } from './stores/wsStore';
 import { AlertRow } from './components/AlertRow';
 import { AlertDetail } from './components/AlertDetail';
 import { IncidentRow } from './components/IncidentRow';
@@ -12,7 +14,6 @@ import { SortControl } from './components/SortControl';
 import { Pagination } from './components/Pagination';
 import { StatsBar } from './components/StatsBar';
 import { ColumnHeader } from './components/ColumnHeader';
-import { useStats } from './hooks/useStats';
 import { SilenceList } from './components/SilenceList';
 import { NotificationChannelList } from './components/NotificationChannelList';
 import type { SortOption } from './components/SortControl';
@@ -57,8 +58,6 @@ const SEVERITY_FILTERS: { key: Severity; label: string; color: string; activeCol
   { key: 'info', label: 'INFO', color: 'text-solace-muted', activeColor: 'text-gray-400 bg-gray-500/10 border-gray-500/30' },
 ];
 
-const PAGE_SIZE = 25;
-
 function SeverityCount({ severity, count }: { severity: Severity; count: number }) {
   const colors: Record<Severity, string> = {
     critical: 'text-red-400 bg-red-500/10',
@@ -77,48 +76,50 @@ function SeverityCount({ severity, count }: { severity: Severity; count: number 
 }
 
 export default function App() {
-  // View state
+  // Initialize WebSocket + polling + initial data load
+  const wsInit = useWSStore((s) => s.init);
+  const wsCleanup = useWSStore((s) => s.cleanup);
+  const wsConnected = useWSStore((s) => s.connected);
+
+  useEffect(() => {
+    wsInit();
+    return wsCleanup;
+  }, [wsInit, wsCleanup]);
+
+  // View state (local — purely UI)
   const [view, setView] = useState<View>('incidents');
 
-  // Alert controls
-  const [alertStatus, setAlertStatus] = useState('');
-  const [alertSeverity, setAlertSeverity] = useState('');
-  const [alertSearch, setAlertSearch] = useState('');
-  const [alertSortBy, setAlertSortBy] = useState('created_at');
-  const [alertSortOrder, setAlertSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [alertPage, setAlertPage] = useState(1);
-  const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+  // Alert store
+  const alerts = useAlertStore((s) => s.alerts);
+  const alertTotal = useAlertStore((s) => s.total);
+  const alertLoading = useAlertStore((s) => s.loading);
+  const alertError = useAlertStore((s) => s.error);
+  const alertFilters = useAlertStore((s) => s.filters);
+  const selectedAlert = useAlertStore((s) => s.selectedAlert);
+  const setAlertFilters = useAlertStore((s) => s.setFilters);
+  const resetAlertFilters = useAlertStore((s) => s.resetFilters);
+  const selectAlert = useAlertStore((s) => s.selectAlert);
+  const acknowledgeAlert = useAlertStore((s) => s.acknowledge);
+  const resolveAlert = useAlertStore((s) => s.resolve);
+  const addTag = useAlertStore((s) => s.addTag);
+  const removeTag = useAlertStore((s) => s.removeTag);
+  const refetchAlerts = useAlertStore((s) => s.fetchAlerts);
 
-  // Incident controls
-  const [incidentStatus, setIncidentStatus] = useState('');
-  const [incidentSearch, setIncidentSearch] = useState('');
-  const [incidentSortBy, setIncidentSortBy] = useState('started_at');
-  const [incidentSortOrder, setIncidentSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [incidentPage, setIncidentPage] = useState(1);
-  const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
+  // Incident store
+  const incidents = useIncidentStore((s) => s.incidents);
+  const incidentTotal = useIncidentStore((s) => s.total);
+  const incidentLoading = useIncidentStore((s) => s.loading);
+  const incidentError = useIncidentStore((s) => s.error);
+  const incidentFilters = useIncidentStore((s) => s.filters);
+  const selectedIncident = useIncidentStore((s) => s.selectedIncident);
+  const setIncidentFilters = useIncidentStore((s) => s.setFilters);
+  const resetIncidentFilters = useIncidentStore((s) => s.resetFilters);
+  const selectIncident = useIncidentStore((s) => s.selectIncident);
+  const acknowledgeIncident = useIncidentStore((s) => s.acknowledge);
+  const resolveIncident = useIncidentStore((s) => s.resolve);
 
-  // Hooks
-  const alertsHook = useAlerts({
-    status: alertStatus || undefined,
-    severity: alertSeverity || undefined,
-    search: alertSearch || undefined,
-    sortBy: alertSortBy,
-    sortOrder: alertSortOrder,
-    page: alertPage,
-    pageSize: PAGE_SIZE,
-  });
-
-  const incidentsHook = useIncidents({
-    status: incidentStatus || undefined,
-    search: incidentSearch || undefined,
-    sortBy: incidentSortBy,
-    sortOrder: incidentSortOrder,
-    page: incidentPage,
-    pageSize: PAGE_SIZE,
-  });
-
-  // Stats for header + stats bar
-  const { stats } = useStats();
+  // Stats store
+  const stats = useStatsStore((s) => s.stats);
 
   const severityCounts = useMemo(() => {
     if (!stats) return { critical: 0, high: 0, warning: 0, low: 0, info: 0 };
@@ -132,76 +133,44 @@ export default function App() {
   }, [stats]);
 
   const activeCount = stats?.alerts.active || 0;
+  const openIncidentCount = stats?.incidents.by_status.open || 0;
 
   // Handlers
   const handleAlertAck = async (id: string) => {
-    await alertsHook.acknowledge(id);
-    if (selectedAlert?.id === id) {
-      setSelectedAlert(prev => prev ? { ...prev, status: 'acknowledged', acknowledged_at: new Date().toISOString() } : null);
-    }
+    await acknowledgeAlert(id);
   };
 
   const handleAlertResolve = async (id: string) => {
-    await alertsHook.resolve(id);
-    if (selectedAlert?.id === id) {
-      setSelectedAlert(prev => prev ? { ...prev, status: 'resolved', resolved_at: new Date().toISOString() } : null);
-    }
+    await resolveAlert(id);
   };
 
   const handleIncidentAck = async (id: string) => {
-    await incidentsHook.acknowledge(id);
-    alertsHook.refetch();
-    if (selectedIncident?.id === id) {
-      setSelectedIncident(prev => prev ? { ...prev, status: 'acknowledged', acknowledged_at: new Date().toISOString() } : null);
-    }
+    await acknowledgeIncident(id);
+    refetchAlerts();
   };
 
   const handleIncidentResolve = async (id: string) => {
-    await incidentsHook.resolve(id);
-    alertsHook.refetch();
-    if (selectedIncident?.id === id) {
-      setSelectedIncident(prev => prev ? { ...prev, status: 'resolved', resolved_at: new Date().toISOString() } : null);
-    }
+    await resolveIncident(id);
+    refetchAlerts();
   };
 
   const handleAlertSelectFromIncident = useCallback(async (alertId: string) => {
     try {
       const alert = await api.alerts.get(alertId);
-      setSelectedAlert(alert);
+      selectAlert(alert);
     } catch {
       // Alert may have been deleted
     }
-  }, []);
+  }, [selectAlert]);
 
   const switchView = (newView: View) => {
     setView(newView);
-    setSelectedAlert(null);
-    setSelectedIncident(null);
+    selectAlert(null);
+    selectIncident(null);
   };
 
-  const resetAlertFilters = () => {
-    setAlertStatus('');
-    setAlertSeverity('');
-    setAlertSearch('');
-    setAlertSortBy('created_at');
-    setAlertSortOrder('desc');
-    setAlertPage(1);
-    setSelectedAlert(null);
-  };
-
-  const resetIncidentFilters = () => {
-    setIncidentStatus('');
-    setIncidentSearch('');
-    setIncidentSortBy('started_at');
-    setIncidentSortOrder('desc');
-    setIncidentPage(1);
-    setSelectedIncident(null);
-  };
-
-  const hasAlertFilters = !!(alertStatus || alertSeverity || alertSearch || alertSortBy !== 'created_at');
-  const hasIncidentFilters = !!(incidentStatus || incidentSearch || incidentSortBy !== 'started_at');
-
-  const openIncidentCount = stats?.incidents.by_status.open || 0;
+  const hasAlertFilters = !!(alertFilters.status || alertFilters.severity || alertFilters.search || alertFilters.sortBy !== 'created_at');
+  const hasIncidentFilters = !!(incidentFilters.status || incidentFilters.search || incidentFilters.sortBy !== 'started_at');
 
   return (
     <div className="h-screen flex flex-col bg-solace-bg">
@@ -295,13 +264,13 @@ export default function App() {
         <div className="flex items-center gap-3">
           <span className="text-xs text-solace-muted font-mono">
             {view === 'incidents'
-              ? `${incidentsHook.total} incident${incidentsHook.total !== 1 ? 's' : ''}`
+              ? `${incidentTotal} incident${incidentTotal !== 1 ? 's' : ''}`
               : view === 'alerts'
-              ? `${alertsHook.total} alert${alertsHook.total !== 1 ? 's' : ''}`
+              ? `${alertTotal} alert${alertTotal !== 1 ? 's' : ''}`
               : null
             }
           </span>
-          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-dot" title="Connected" />
+          <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-500 animate-pulse-dot' : 'bg-yellow-500'}`} title={wsConnected ? 'Connected' : 'Reconnecting...'} />
         </div>
       </header>
 
@@ -314,9 +283,9 @@ export default function App() {
               {ALERT_STATUS_TABS.map(tab => (
                 <button
                   key={tab.key}
-                  onClick={() => { setAlertStatus(tab.key); setAlertPage(1); setSelectedAlert(null); }}
+                  onClick={() => { setAlertFilters({ status: tab.key || undefined, page: 1 }); selectAlert(null); }}
                   className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                    alertStatus === tab.key
+                    (alertFilters.status || '') === tab.key
                       ? 'bg-solace-surface text-solace-bright'
                       : 'text-solace-muted hover:text-solace-text hover:bg-solace-surface/50'
                   }`}
@@ -331,13 +300,12 @@ export default function App() {
                 <button
                   key={sev.key}
                   onClick={() => {
-                    setAlertSeverity(alertSeverity === sev.key ? '' : sev.key);
-                    setAlertPage(1);
-                    setSelectedAlert(null);
+                    setAlertFilters({ severity: alertFilters.severity === sev.key ? undefined : sev.key, page: 1 });
+                    selectAlert(null);
                   }}
                   className={`
                     px-2 py-1 text-[10px] font-mono font-bold rounded border transition-colors
-                    ${alertSeverity === sev.key
+                    ${alertFilters.severity === sev.key
                       ? sev.activeColor
                       : 'border-transparent text-solace-muted hover:text-solace-text'
                     }
@@ -351,9 +319,9 @@ export default function App() {
             INCIDENT_STATUS_TABS.map(tab => (
               <button
                 key={tab.key}
-                onClick={() => { setIncidentStatus(tab.key); setIncidentPage(1); setSelectedIncident(null); }}
+                onClick={() => { setIncidentFilters({ status: tab.key || undefined, page: 1 }); selectIncident(null); }}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  incidentStatus === tab.key
+                  (incidentFilters.status || '') === tab.key
                     ? 'bg-solace-surface text-solace-bright'
                     : 'text-solace-muted hover:text-solace-text hover:bg-solace-surface/50'
                 }`}
@@ -385,20 +353,20 @@ export default function App() {
         {/* Right: Search + Sort */}
         <div className="flex items-center gap-2">
           <SearchBar
-            value={view === 'alerts' ? alertSearch : incidentSearch}
+            value={view === 'alerts' ? (alertFilters.search || '') : (incidentFilters.search || '')}
             onChange={v => {
-              if (view === 'alerts') { setAlertSearch(v); setAlertPage(1); }
-              else { setIncidentSearch(v); setIncidentPage(1); }
+              if (view === 'alerts') { setAlertFilters({ search: v || undefined, page: 1 }); }
+              else { setIncidentFilters({ search: v || undefined, page: 1 }); }
             }}
             placeholder={view === 'alerts' ? 'Search alerts...' : 'Search incidents...'}
           />
           <SortControl
             options={view === 'alerts' ? ALERT_SORT_OPTIONS : INCIDENT_SORT_OPTIONS}
-            sortBy={view === 'alerts' ? alertSortBy : incidentSortBy}
-            sortOrder={view === 'alerts' ? alertSortOrder : incidentSortOrder}
+            sortBy={view === 'alerts' ? alertFilters.sortBy : incidentFilters.sortBy}
+            sortOrder={view === 'alerts' ? alertFilters.sortOrder : incidentFilters.sortOrder}
             onSort={(by, order) => {
-              if (view === 'alerts') { setAlertSortBy(by); setAlertSortOrder(order); setAlertPage(1); }
-              else { setIncidentSortBy(by); setIncidentSortOrder(order); setIncidentPage(1); }
+              if (view === 'alerts') { setAlertFilters({ sortBy: by, sortOrder: order, page: 1 }); }
+              else { setIncidentFilters({ sortBy: by, sortOrder: order, page: 1 }); }
             }}
           />
         </div>
@@ -425,50 +393,50 @@ export default function App() {
           {view === 'alerts' ? (
             <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 border-b border-solace-border bg-solace-surface/20">
               <div className="w-16">
-                <ColumnHeader label="Severity" sortKey="severity" currentSort={alertSortBy} currentOrder={alertSortOrder}
-                  onSort={k => { setAlertSortBy(k); setAlertSortOrder(alertSortBy === k && alertSortOrder === 'desc' ? 'asc' : 'desc'); setAlertPage(1); }} />
+                <ColumnHeader label="Severity" sortKey="severity" currentSort={alertFilters.sortBy} currentOrder={alertFilters.sortOrder}
+                  onSort={k => { setAlertFilters({ sortBy: k, sortOrder: alertFilters.sortBy === k && alertFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
               </div>
               <div className="flex-1 min-w-0">
-                <ColumnHeader label="Name" sortKey="name" currentSort={alertSortBy} currentOrder={alertSortOrder}
-                  onSort={k => { setAlertSortBy(k); setAlertSortOrder(alertSortBy === k && alertSortOrder === 'desc' ? 'asc' : 'desc'); setAlertPage(1); }} />
+                <ColumnHeader label="Name" sortKey="name" currentSort={alertFilters.sortBy} currentOrder={alertFilters.sortOrder}
+                  onSort={k => { setAlertFilters({ sortBy: k, sortOrder: alertFilters.sortBy === k && alertFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
               </div>
               <div className="w-28">
-                <ColumnHeader label="Service" sortKey="service" currentSort={alertSortBy} currentOrder={alertSortOrder}
-                  onSort={k => { setAlertSortBy(k); setAlertSortOrder(alertSortBy === k && alertSortOrder === 'desc' ? 'asc' : 'desc'); setAlertPage(1); }} />
+                <ColumnHeader label="Service" sortKey="service" currentSort={alertFilters.sortBy} currentOrder={alertFilters.sortOrder}
+                  onSort={k => { setAlertFilters({ sortBy: k, sortOrder: alertFilters.sortBy === k && alertFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
               </div>
               <div className="w-24">
-                <ColumnHeader label="Status" sortKey="status" currentSort={alertSortBy} currentOrder={alertSortOrder}
-                  onSort={k => { setAlertSortBy(k); setAlertSortOrder(alertSortBy === k && alertSortOrder === 'desc' ? 'asc' : 'desc'); setAlertPage(1); }} />
+                <ColumnHeader label="Status" sortKey="status" currentSort={alertFilters.sortBy} currentOrder={alertFilters.sortOrder}
+                  onSort={k => { setAlertFilters({ sortBy: k, sortOrder: alertFilters.sortBy === k && alertFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
               </div>
               <div className="w-16 text-right">
-                <ColumnHeader label="Dupes" sortKey="duplicate_count" currentSort={alertSortBy} currentOrder={alertSortOrder}
-                  onSort={k => { setAlertSortBy(k); setAlertSortOrder(alertSortBy === k && alertSortOrder === 'desc' ? 'asc' : 'desc'); setAlertPage(1); }} className="justify-end" />
+                <ColumnHeader label="Dupes" sortKey="duplicate_count" currentSort={alertFilters.sortBy} currentOrder={alertFilters.sortOrder}
+                  onSort={k => { setAlertFilters({ sortBy: k, sortOrder: alertFilters.sortBy === k && alertFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} className="justify-end" />
               </div>
               <div className="w-24 text-right">
-                <ColumnHeader label="Time" sortKey="created_at" currentSort={alertSortBy} currentOrder={alertSortOrder}
-                  onSort={k => { setAlertSortBy(k); setAlertSortOrder(alertSortBy === k && alertSortOrder === 'desc' ? 'asc' : 'desc'); setAlertPage(1); }} className="justify-end" />
+                <ColumnHeader label="Time" sortKey="created_at" currentSort={alertFilters.sortBy} currentOrder={alertFilters.sortOrder}
+                  onSort={k => { setAlertFilters({ sortBy: k, sortOrder: alertFilters.sortBy === k && alertFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} className="justify-end" />
               </div>
             </div>
           ) : (
             <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 border-b border-solace-border bg-solace-surface/20">
               <div className="w-16">
-                <ColumnHeader label="Severity" sortKey="severity" currentSort={incidentSortBy} currentOrder={incidentSortOrder}
-                  onSort={k => { setIncidentSortBy(k); setIncidentSortOrder(incidentSortBy === k && incidentSortOrder === 'desc' ? 'asc' : 'desc'); setIncidentPage(1); }} />
+                <ColumnHeader label="Severity" sortKey="severity" currentSort={incidentFilters.sortBy} currentOrder={incidentFilters.sortOrder}
+                  onSort={k => { setIncidentFilters({ sortBy: k, sortOrder: incidentFilters.sortBy === k && incidentFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
               </div>
               <div className="flex-1 min-w-0">
-                <ColumnHeader label="Title" sortKey="title" currentSort={incidentSortBy} currentOrder={incidentSortOrder}
-                  onSort={k => { setIncidentSortBy(k); setIncidentSortOrder(incidentSortBy === k && incidentSortOrder === 'desc' ? 'asc' : 'desc'); setIncidentPage(1); }} />
+                <ColumnHeader label="Title" sortKey="title" currentSort={incidentFilters.sortBy} currentOrder={incidentFilters.sortOrder}
+                  onSort={k => { setIncidentFilters({ sortBy: k, sortOrder: incidentFilters.sortBy === k && incidentFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
               </div>
               <div className="w-24">
-                <ColumnHeader label="Status" sortKey="status" currentSort={incidentSortBy} currentOrder={incidentSortOrder}
-                  onSort={k => { setIncidentSortBy(k); setIncidentSortOrder(incidentSortBy === k && incidentSortOrder === 'desc' ? 'asc' : 'desc'); setIncidentPage(1); }} />
+                <ColumnHeader label="Status" sortKey="status" currentSort={incidentFilters.sortBy} currentOrder={incidentFilters.sortOrder}
+                  onSort={k => { setIncidentFilters({ sortBy: k, sortOrder: incidentFilters.sortBy === k && incidentFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
               </div>
               <div className="w-20 text-center">
                 <span className="text-[10px] uppercase tracking-wider font-semibold text-solace-muted">Alerts</span>
               </div>
               <div className="w-24 text-right">
-                <ColumnHeader label="Started" sortKey="started_at" currentSort={incidentSortBy} currentOrder={incidentSortOrder}
-                  onSort={k => { setIncidentSortBy(k); setIncidentSortOrder(incidentSortBy === k && incidentSortOrder === 'desc' ? 'asc' : 'desc'); setIncidentPage(1); }} className="justify-end" />
+                <ColumnHeader label="Started" sortKey="started_at" currentSort={incidentFilters.sortBy} currentOrder={incidentFilters.sortOrder}
+                  onSort={k => { setIncidentFilters({ sortBy: k, sortOrder: incidentFilters.sortBy === k && incidentFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} className="justify-end" />
               </div>
             </div>
           )}
@@ -476,26 +444,26 @@ export default function App() {
           <div className="flex-1 overflow-y-auto">
             {view === 'alerts' ? (
               <>
-                {alertsHook.loading && alertsHook.alerts.length === 0 && (
+                {alertLoading && alerts.length === 0 && (
                   <div className="flex items-center justify-center h-40">
                     <div className="text-sm text-solace-muted">Loading alerts...</div>
                   </div>
                 )}
-                {alertsHook.error && (
+                {alertError && (
                   <div className="m-4 p-3 rounded-md bg-red-500/10 border border-red-500/20 text-sm text-red-400">
-                    {alertsHook.error}
+                    {alertError}
                   </div>
                 )}
-                {!alertsHook.loading && alertsHook.alerts.length === 0 && (
-                  <EmptyState label={alertSearch ? `No alerts matching "${alertSearch}"` : 'No alerts found'} />
+                {!alertLoading && alerts.length === 0 && (
+                  <EmptyState label={alertFilters.search ? `No alerts matching "${alertFilters.search}"` : 'No alerts found'} />
                 )}
                 <div className="divide-y divide-solace-border/50">
-                  {alertsHook.alerts.map(alert => (
+                  {alerts.map(alert => (
                     <AlertRow
                       key={alert.id}
                       alert={alert}
                       selected={selectedAlert?.id === alert.id}
-                      onSelect={setSelectedAlert}
+                      onSelect={selectAlert}
                       onAcknowledge={handleAlertAck}
                       onResolve={handleAlertResolve}
                     />
@@ -504,26 +472,26 @@ export default function App() {
               </>
             ) : (
               <>
-                {incidentsHook.loading && incidentsHook.incidents.length === 0 && (
+                {incidentLoading && incidents.length === 0 && (
                   <div className="flex items-center justify-center h-40">
                     <div className="text-sm text-solace-muted">Loading incidents...</div>
                   </div>
                 )}
-                {incidentsHook.error && (
+                {incidentError && (
                   <div className="m-4 p-3 rounded-md bg-red-500/10 border border-red-500/20 text-sm text-red-400">
-                    {incidentsHook.error}
+                    {incidentError}
                   </div>
                 )}
-                {!incidentsHook.loading && incidentsHook.incidents.length === 0 && (
-                  <EmptyState label={incidentSearch ? `No incidents matching "${incidentSearch}"` : 'No incidents found'} />
+                {!incidentLoading && incidents.length === 0 && (
+                  <EmptyState label={incidentFilters.search ? `No incidents matching "${incidentFilters.search}"` : 'No incidents found'} />
                 )}
                 <div className="divide-y divide-solace-border/50">
-                  {incidentsHook.incidents.map(incident => (
+                  {incidents.map(incident => (
                     <IncidentRow
                       key={incident.id}
                       incident={incident}
                       selected={selectedIncident?.id === incident.id}
-                      onSelect={setSelectedIncident}
+                      onSelect={selectIncident}
                       onAcknowledge={handleIncidentAck}
                       onResolve={handleIncidentResolve}
                     />
@@ -536,17 +504,17 @@ export default function App() {
           {/* Pagination */}
           {view === 'alerts' ? (
             <Pagination
-              page={alertPage}
-              pageSize={PAGE_SIZE}
-              total={alertsHook.total}
-              onPageChange={setAlertPage}
+              page={alertFilters.page}
+              pageSize={alertFilters.pageSize}
+              total={alertTotal}
+              onPageChange={(p) => setAlertFilters({ page: p })}
             />
           ) : (
             <Pagination
-              page={incidentPage}
-              pageSize={PAGE_SIZE}
-              total={incidentsHook.total}
-              onPageChange={setIncidentPage}
+              page={incidentFilters.page}
+              pageSize={incidentFilters.pageSize}
+              total={incidentTotal}
+              onPageChange={(p) => setIncidentFilters({ page: p })}
             />
           )}
         </div>
@@ -559,15 +527,13 @@ export default function App() {
               alert={selectedAlert}
               onAcknowledge={handleAlertAck}
               onResolve={handleAlertResolve}
-              onClose={() => setSelectedAlert(null)}
+              onClose={() => selectAlert(null)}
               onTagAdd={async (alertId, tag) => {
-                const updated = await alertsHook.addTag(alertId, tag);
-                if (updated) setSelectedAlert(updated);
+                const updated = await addTag(alertId, tag);
                 return updated;
               }}
               onTagRemove={async (alertId, tag) => {
-                const updated = await alertsHook.removeTag(alertId, tag);
-                if (updated) setSelectedAlert(updated);
+                const updated = await removeTag(alertId, tag);
                 return updated;
               }}
             />
@@ -579,7 +545,7 @@ export default function App() {
               incident={selectedIncident}
               onAcknowledge={handleIncidentAck}
               onResolve={handleIncidentResolve}
-              onClose={() => setSelectedIncident(null)}
+              onClose={() => selectIncident(null)}
               onAlertSelect={handleAlertSelectFromIncident}
             />
           </div>

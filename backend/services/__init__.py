@@ -57,6 +57,13 @@ async def ingest_alert(
             f"Duplicate alert: {normalized.name} (fingerprint={fingerprint}, "
             f"count={updated.duplicate_count})"
         )
+
+        from backend.api.routes.ws import emit_event
+        await emit_event("alert.updated", {
+            "alert_id": str(updated.id),
+            "duplicate_count": updated.duplicate_count,
+        })
+
         return updated, True
 
     # Step 3b: Check silence windows
@@ -136,6 +143,17 @@ async def ingest_alert(
         f"severity={normalized.severity}, id={alert.id}"
         f"{f', incident={str(incident.id)[:8]}' if incident else ''})"
     )
+
+    # Emit real-time events
+    from backend.api.routes.ws import emit_event
+
+    await emit_event("alert.created", {"alert_id": str(alert.id), "name": alert.name})
+    if incident and result.event_type == "incident_created":
+        inc_data = {"incident_id": str(incident.id), "title": incident.title}
+        await emit_event("incident.created", inc_data)
+    elif incident and result.event_type == "severity_changed":
+        inc_data = {"incident_id": str(incident.id), "title": incident.title}
+        await emit_event("incident.updated", inc_data)
 
     return alert, False
 
@@ -229,6 +247,10 @@ async def acknowledge_alert(
     alert.updated_at = now
     await db.flush()
     await db.refresh(alert)
+
+    from backend.api.routes.ws import emit_event
+    await emit_event("alert.updated", {"alert_id": str(alert.id), "status": "acknowledged"})
+
     return alert
 
 
@@ -251,6 +273,10 @@ async def resolve_alert(
     alert.updated_at = now
     await db.flush()
     await db.refresh(alert)
+
+    from backend.api.routes.ws import emit_event
+    await emit_event("alert.updated", {"alert_id": str(alert.id), "status": "resolved"})
+
     return alert
 
 
@@ -363,6 +389,11 @@ async def acknowledge_incident(
 
     await db.flush()
     await db.refresh(incident)
+
+    from backend.api.routes.ws import emit_event
+    inc_id = str(incident.id)
+    await emit_event("incident.updated", {"incident_id": inc_id, "status": "acknowledged"})
+
     return incident
 
 
@@ -402,6 +433,10 @@ async def resolve_incident(
 
     await db.flush()
     await db.refresh(incident)
+
+    from backend.api.routes.ws import emit_event
+    await emit_event("incident.updated", {"incident_id": str(incident.id), "status": "resolved"})
+
     return incident
 
 

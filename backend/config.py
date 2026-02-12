@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_prefix: str = "/api/v1"
     secret_key: str = "change-me-to-a-random-secret-key"
+    api_key: str = ""
 
     # ── Database ─────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://solace:solace@localhost:5432/solace"

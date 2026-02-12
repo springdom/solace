@@ -1,9 +1,11 @@
 import logging
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.deps import require_api_key
 from backend.api.routes import alerts, health, incidents, notifications, silences, stats, webhooks
+from backend.api.routes.ws import router as ws_router
 from backend.config import get_settings
 
 settings = get_settings()
@@ -40,16 +42,20 @@ app.add_middleware(
 
 # ─── Routes ──────────────────────────────────────────────
 
-# Health checks at root level (no prefix)
+# Health checks at root level (no prefix, no auth — used by k8s probes)
 app.include_router(health.router)
 
-# API routes under /api/v1
-app.include_router(webhooks.router, prefix=settings.api_prefix)
-app.include_router(alerts.router, prefix=settings.api_prefix)
-app.include_router(incidents.router, prefix=settings.api_prefix)
-app.include_router(stats.router, prefix=settings.api_prefix)
-app.include_router(silences.router, prefix=settings.api_prefix)
-app.include_router(notifications.router, prefix=settings.api_prefix)
+# WebSocket — auth is checked inside the handler (WS can't use header deps)
+app.include_router(ws_router, prefix=settings.api_prefix)
+
+# API routes under /api/v1 — all require API key
+api_deps = [Depends(require_api_key)]
+app.include_router(webhooks.router, prefix=settings.api_prefix, dependencies=api_deps)
+app.include_router(alerts.router, prefix=settings.api_prefix, dependencies=api_deps)
+app.include_router(incidents.router, prefix=settings.api_prefix, dependencies=api_deps)
+app.include_router(stats.router, prefix=settings.api_prefix, dependencies=api_deps)
+app.include_router(silences.router, prefix=settings.api_prefix, dependencies=api_deps)
+app.include_router(notifications.router, prefix=settings.api_prefix, dependencies=api_deps)
 
 
 # ─── Startup / Shutdown ──────────────────────────────────
