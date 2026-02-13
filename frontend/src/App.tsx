@@ -546,9 +546,9 @@ export default function App() {
         <div className="flex-1 flex flex-col min-h-0">
           {/* Column headers */}
           {view === 'alerts' ? (
-            <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 border-b border-solace-border bg-solace-surface/20">
+            <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b border-solace-border bg-solace-surface/20">
               {/* Select all checkbox */}
-              <div className="flex-shrink-0 w-5" onClick={e => e.stopPropagation()}>
+              <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
                 <input
                   type="checkbox"
                   checked={selectedIds.size > 0 && selectedIds.size === alerts.length}
