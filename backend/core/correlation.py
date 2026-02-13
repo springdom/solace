@@ -190,8 +190,16 @@ async def _attach_to_incident(
         db.add(sev_event)
 
     await db.flush()
-    await db.refresh(incident)
     await db.refresh(alert)
+
+    # Re-query with eager loading so alerts relationship is available
+    stmt = (
+        select(Incident)
+        .where(Incident.id == incident.id)
+        .options(selectinload(Incident.alerts))
+    )
+    result = await db.execute(stmt)
+    incident = result.unique().scalar_one()
 
     logger.info(
         f"Alert '{alert.name}' attached to incident '{incident.title}' "
@@ -236,8 +244,17 @@ async def _create_incident(
     db.add(event)
 
     await db.flush()
-    await db.refresh(incident)
     await db.refresh(alert)
+
+    # Re-query with eager loading so alerts relationship is available
+    # for downstream consumers (notification dispatch, etc.)
+    stmt = (
+        select(Incident)
+        .where(Incident.id == incident.id)
+        .options(selectinload(Incident.alerts))
+    )
+    result = await db.execute(stmt)
+    incident = result.unique().scalar_one()
 
     logger.info(
         f"New incident created: '{incident.title}' "

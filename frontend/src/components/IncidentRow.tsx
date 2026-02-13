@@ -1,7 +1,7 @@
 import type { Incident } from '../lib/types';
 import { SeverityBadge } from './SeverityBadge';
 import { IncidentStatusBadge } from './IncidentStatusBadge';
-import { timeAgo, duration } from '../lib/time';
+import { timeAgo } from '../lib/time';
 
 interface IncidentRowProps {
   incident: Incident;
@@ -26,54 +26,41 @@ export function IncidentRow({ incident, selected, onSelect, onAcknowledge, onRes
         }
       `}
     >
-      {/* Severity */}
+      {/* Severity — matches w-16 header */}
       <div className="flex-shrink-0 w-16">
         <SeverityBadge severity={incident.severity} pulse={isOpen} />
       </div>
 
-      {/* Main content */}
+      {/* Title — matches flex-1 header */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-sm font-medium text-solace-bright truncate">
-            {incident.title}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 mt-1">
-          {/* Alert count */}
-          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-solace-border/50 text-[10px] font-mono text-solace-muted">
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M8 2L1 14h14L8 2z" />
-            </svg>
-            {incident.alert_count} alert{incident.alert_count !== 1 ? 's' : ''}
-          </span>
-          {/* Alert hosts preview */}
-          {incident.alerts.slice(0, 3).map((a) => (
-            <span key={a.id} className="text-[11px] text-solace-muted font-mono">
-              {a.host || a.name}
-            </span>
-          ))}
-          {incident.alert_count > 3 && (
-            <span className="text-[11px] text-solace-muted">+{incident.alert_count - 3}</span>
-          )}
-        </div>
+        <span className="font-mono text-sm font-medium text-solace-bright truncate block">
+          {incident.title}
+        </span>
       </div>
 
-      {/* Status */}
-      <div className="flex-shrink-0">
+      {/* Status — matches w-24 header */}
+      <div className="flex-shrink-0 w-24">
         <IncidentStatusBadge status={incident.status} />
       </div>
 
-      {/* Duration */}
-      <div className="flex-shrink-0 w-20 text-right">
+      {/* Alerts count — matches w-20 header */}
+      <div className="flex-shrink-0 w-20 text-center">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-solace-border/50 text-[10px] font-mono text-solace-muted">
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M8 2L1 14h14L8 2z" />
+          </svg>
+          {incident.alert_count}
+        </span>
+      </div>
+
+      {/* Started — matches w-24 header, always shows when it started */}
+      <div className="flex-shrink-0 w-24 text-right">
         <div className="text-xs font-mono text-solace-muted">
-          {incident.status === 'resolved'
-            ? duration(incident.started_at, incident.resolved_at)
-            : timeAgo(incident.started_at)
-          }
+          {timeAgo(incident.started_at)}
         </div>
       </div>
 
-      {/* Actions */}
+      {/* Actions — hover reveal */}
       <div className="flex-shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         {isOpen && (
           <button

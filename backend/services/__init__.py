@@ -733,7 +733,8 @@ async def archive_alerts(
     stmt = select(Alert).where(
         Alert.status == AlertStatus.RESOLVED,
         Alert.archived_at.is_(None),
-        Alert.updated_at < cutoff,
+        Alert.resolved_at.isnot(None),
+        Alert.resolved_at < cutoff,
     )
     result = await db.execute(stmt)
     alerts = list(result.scalars().all())

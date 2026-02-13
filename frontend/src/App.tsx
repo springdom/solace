@@ -582,7 +582,7 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 border-b border-solace-border bg-solace-surface/20">
+            <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b border-solace-border bg-solace-surface/20">
               <div className="w-16">
                 <ColumnHeader label="Severity" sortKey="severity" currentSort={incidentFilters.sortBy} currentOrder={incidentFilters.sortOrder}
                   onSort={k => { setIncidentFilters({ sortBy: k, sortOrder: incidentFilters.sortBy === k && incidentFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />

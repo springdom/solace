@@ -274,26 +274,30 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
           <h3 className="text-[11px] uppercase tracking-wider text-solace-muted font-semibold mb-2">Links</h3>
           <div className="space-y-2">
             {alert.generator_url && (
-              <a
-                href={ensureProtocol(alert.generator_url)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
-              >
-                <ExternalLinkIcon />
-                View in source
-              </a>
+              <div>
+                <a
+                  href={ensureProtocol(alert.generator_url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
+                >
+                  <ExternalLinkIcon />
+                  View in source
+                </a>
+              </div>
             )}
             {alert.runbook_url && (
-              <a
-                href={ensureProtocol(alert.runbook_url)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
-              >
-                <ExternalLinkIcon />
-                Runbook
-              </a>
+              <div>
+                <a
+                  href={ensureProtocol(alert.runbook_url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
+                >
+                  <ExternalLinkIcon />
+                  Runbook
+                </a>
+              </div>
             )}
 
             {/* Ticket URL */}
