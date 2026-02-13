@@ -1,7 +1,8 @@
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import String as SAString
+from sqlalchemy import cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +14,7 @@ from backend.integrations import NormalizedAlert
 from backend.models import (
     Alert,
     AlertNote,
+    AlertOccurrence,
     AlertStatus,
     Incident,
     IncidentEvent,
@@ -53,6 +55,12 @@ async def ingest_alert(
     if existing:
         # Step 3a: Update existing alert
         updated = await process_duplicate(db, existing)
+
+        # Record occurrence for timeline
+        occurrence = AlertOccurrence(alert_id=updated.id, received_at=datetime.now(UTC))
+        db.add(occurrence)
+        await db.flush()
+
         logger.info(
             f"Duplicate alert: {normalized.name} (fingerprint={fingerprint}, "
             f"count={updated.duplicate_count})"
@@ -87,6 +95,8 @@ async def ingest_alert(
             starts_at=normalized.starts_at or datetime.now(UTC),
             ends_at=normalized.ends_at,
             generator_url=normalized.generator_url,
+            runbook_url=normalized.runbook_url,
+            ticket_url=normalized.ticket_url,
             last_received_at=datetime.now(UTC),
         )
         db.add(alert)
@@ -117,6 +127,8 @@ async def ingest_alert(
         starts_at=normalized.starts_at or datetime.now(UTC),
         ends_at=normalized.ends_at,
         generator_url=normalized.generator_url,
+        runbook_url=normalized.runbook_url,
+        ticket_url=normalized.ticket_url,
         last_received_at=datetime.now(UTC),
     )
 
@@ -127,6 +139,11 @@ async def ingest_alert(
     db.add(alert)
     await db.flush()
     await db.refresh(alert)
+
+    # Record first occurrence for timeline
+    occurrence = AlertOccurrence(alert_id=alert.id, received_at=datetime.now(UTC))
+    db.add(occurrence)
+    await db.flush()
 
     # Step 4: Correlate to an incident
     from backend.core.notifications import dispatch_notifications
@@ -164,6 +181,7 @@ async def get_alerts(
     severity: str | None = None,
     service: str | None = None,
     search: str | None = None,
+    tag: str | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
     page: int = 1,
@@ -184,7 +202,13 @@ async def get_alerts(
         query = query.where(Alert.service == service)
         count_query = count_query.where(Alert.service == service)
 
-    # Text search across name, service, host, description
+    # Exact tag filter (JSONB array containment)
+    if tag:
+        tag_filter = Alert.tags.contains([tag])
+        query = query.where(tag_filter)
+        count_query = count_query.where(tag_filter)
+
+    # Text search across name, service, host, description, tags
     if search:
         pattern = f"%{search}%"
         search_filter = or_(
@@ -193,6 +217,7 @@ async def get_alerts(
             Alert.host.ilike(pattern),
             Alert.description.ilike(pattern),
             Alert.fingerprint.ilike(pattern),
+            cast(Alert.tags, SAString).ilike(pattern),
         )
         query = query.where(search_filter)
         count_query = count_query.where(search_filter)
@@ -639,3 +664,83 @@ async def get_stats(db: AsyncSession) -> dict:
         "mtta_seconds": round(mtta_seconds, 1) if mtta_seconds else None,
         "mttr_seconds": round(mttr_seconds, 1) if mttr_seconds else None,
     }
+
+
+# ─── Bulk Alert Actions ─────────────────────────────────
+
+
+async def bulk_acknowledge_alerts(
+    db: AsyncSession,
+    alert_ids: list,
+    acknowledged_by: str | None = None,
+) -> list:
+    """Acknowledge multiple alerts at once."""
+    now = datetime.now(UTC)
+    stmt = select(Alert).where(
+        Alert.id.in_(alert_ids),
+        Alert.status == AlertStatus.FIRING,
+    )
+    result = await db.execute(stmt)
+    alerts = list(result.scalars().all())
+
+    updated_ids = []
+    for alert in alerts:
+        alert.status = AlertStatus.ACKNOWLEDGED
+        alert.acknowledged_at = now
+        alert.updated_at = now
+        updated_ids.append(alert.id)
+
+    await db.flush()
+    return updated_ids
+
+
+async def bulk_resolve_alerts(
+    db: AsyncSession,
+    alert_ids: list,
+) -> list:
+    """Resolve multiple alerts at once."""
+    now = datetime.now(UTC)
+    stmt = select(Alert).where(
+        Alert.id.in_(alert_ids),
+        Alert.status.in_([AlertStatus.FIRING, AlertStatus.ACKNOWLEDGED]),
+    )
+    result = await db.execute(stmt)
+    alerts = list(result.scalars().all())
+
+    updated_ids = []
+    for alert in alerts:
+        alert.status = AlertStatus.RESOLVED
+        alert.resolved_at = now
+        alert.ends_at = now
+        alert.updated_at = now
+        updated_ids.append(alert.id)
+
+    await db.flush()
+    return updated_ids
+
+
+# ─── Alert Archiving ────────────────────────────────────
+
+
+async def archive_alerts(
+    db: AsyncSession,
+    older_than_days: int = 30,
+) -> int:
+    """Archive resolved alerts older than the given number of days."""
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(days=older_than_days)
+
+    stmt = select(Alert).where(
+        Alert.status == AlertStatus.RESOLVED,
+        Alert.archived_at.is_(None),
+        Alert.updated_at < cutoff,
+    )
+    result = await db.execute(stmt)
+    alerts = list(result.scalars().all())
+
+    for alert in alerts:
+        alert.status = AlertStatus.ARCHIVED
+        alert.archived_at = now
+
+    await db.flush()
+    return len(alerts)

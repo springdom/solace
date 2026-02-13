@@ -17,6 +17,7 @@ interface NotificationState {
     config: Record<string, unknown>;
     filters?: Record<string, unknown>;
   }) => Promise<void>;
+  updateChannel: (id: string, data: Record<string, unknown>) => Promise<void>;
   deleteChannel: (id: string) => Promise<void>;
   testChannel: (id: string) => Promise<{ status: string; message: string }>;
 }
@@ -54,6 +55,11 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
 
   createChannel: async (data) => {
     await api.notifications.createChannel(data);
+    await get().fetchChannels();
+  },
+
+  updateChannel: async (id, data) => {
+    await api.notifications.updateChannel(id, data);
     await get().fetchChannels();
   },
 

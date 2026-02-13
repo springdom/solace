@@ -39,7 +39,8 @@ def _alert(**kw) -> MagicMock:
         raw_payload={}, starts_at=now, ends_at=None,
         last_received_at=now, acknowledged_at=None,
         acknowledged_by=None, resolved_at=None, duplicate_count=1,
-        generator_url=None, incident_id=None,
+        generator_url=None, runbook_url=None, ticket_url=None,
+        archived_at=None, incident_id=None,
         created_at=now, updated_at=now,
     )
     defaults.update(kw)
@@ -55,7 +56,7 @@ def _incident(**kw) -> MagicMock:
     defaults = dict(
         id=uuid.uuid4(), title="test-svc — TestAlert",
         status=IncidentStatus.OPEN, severity=Severity.WARNING,
-        summary="desc", started_at=now, acknowledged_at=None,
+        summary="desc", phase=None, started_at=now, acknowledged_at=None,
         resolved_at=None, assigned_to=None, alerts=[], events=[],
         created_at=now, updated_at=now,
     )
@@ -65,7 +66,7 @@ def _incident(**kw) -> MagicMock:
 
     # __table__.columns used by _incident_to_response
     cols = []
-    for key in ["id", "title", "status", "severity", "summary",
+    for key in ["id", "title", "status", "severity", "summary", "phase",
                 "started_at", "acknowledged_at", "resolved_at",
                 "assigned_to", "created_at", "updated_at"]:
         c = MagicMock()

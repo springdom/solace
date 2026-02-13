@@ -1,4 +1,4 @@
-import type { Alert, AlertListResponse, AlertNote, AlertNoteListResponse, Incident, IncidentDetail, IncidentListResponse, SilenceWindow, SilenceWindowListResponse, NotificationChannel, NotificationChannelListResponse, NotificationLogListResponse } from './types';
+import type { Alert, AlertListResponse, AlertNote, AlertNoteListResponse, AlertOccurrenceListResponse, AppSettings, Incident, IncidentDetail, IncidentListResponse, SilenceWindow, SilenceWindowListResponse, NotificationChannel, NotificationChannelListResponse, NotificationLogListResponse } from './types';
 
 const API_BASE = '/api/v1';
 
@@ -27,6 +27,7 @@ export interface AlertListParams {
   status?: string;
   severity?: string;
   service?: string;
+  tag?: string;
   q?: string;
   sort_by?: string;
   sort_order?: string;
@@ -104,6 +105,35 @@ export const api = {
     deleteNote(noteId: string) {
       return fetch(`${API_BASE}/alerts/notes/${noteId}`, { method: 'DELETE' });
     },
+    // Occurrence history
+    getHistory(alertId: string) {
+      return request<AlertOccurrenceListResponse>(`/alerts/${alertId}/history`);
+    },
+    // Ticket URL
+    setTicketUrl(alertId: string, ticketUrl: string) {
+      return request<Alert>(`/alerts/${alertId}/ticket`, {
+        method: 'PUT',
+        body: JSON.stringify({ ticket_url: ticketUrl }),
+      });
+    },
+    // Bulk operations
+    bulkAcknowledge(alertIds: string[]) {
+      return request<{ updated: number; alert_ids: string[] }>('/alerts/bulk/acknowledge', {
+        method: 'POST',
+        body: JSON.stringify({ alert_ids: alertIds }),
+      });
+    },
+    bulkResolve(alertIds: string[]) {
+      return request<{ updated: number; alert_ids: string[] }>('/alerts/bulk/resolve', {
+        method: 'POST',
+        body: JSON.stringify({ alert_ids: alertIds }),
+      });
+    },
+    // Archiving
+    archive(olderThanDays?: number) {
+      const params = olderThanDays ? { older_than_days: olderThanDays } : {};
+      return request<{ archived: number }>(`/alerts/archive${buildQuery(params)}`, { method: 'POST' });
+    },
   },
 
   incidents: {
@@ -160,6 +190,12 @@ export const api = {
     },
     listLogs(params?: { channel_id?: string; incident_id?: string; page?: number; page_size?: number }) {
       return request<NotificationLogListResponse>(`/notifications/logs${buildQuery(params || {})}`);
+    },
+  },
+
+  settings: {
+    get() {
+      return request<AppSettings>('/settings');
     },
   },
 };

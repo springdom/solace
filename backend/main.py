@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.deps import require_api_key
 from backend.api.routes import alerts, health, incidents, notifications, silences, stats, webhooks
+from backend.api.routes import settings as settings_routes
 from backend.api.routes.ws import router as ws_router
 from backend.config import get_settings
 
@@ -56,6 +57,7 @@ app.include_router(incidents.router, prefix=settings.api_prefix, dependencies=ap
 app.include_router(stats.router, prefix=settings.api_prefix, dependencies=api_deps)
 app.include_router(silences.router, prefix=settings.api_prefix, dependencies=api_deps)
 app.include_router(notifications.router, prefix=settings.api_prefix, dependencies=api_deps)
+app.include_router(settings_routes.router, prefix=settings.api_prefix, dependencies=api_deps)
 
 
 # ─── Startup / Shutdown ──────────────────────────────────

@@ -14,6 +14,7 @@ export function useNotificationChannels() {
     loading: store.loading,
     error: store.error,
     createChannel: store.createChannel,
+    updateChannel: store.updateChannel,
     deleteChannel: store.deleteChannel,
     testChannel: store.testChannel,
     refetch: store.fetchChannels,

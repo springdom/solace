@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Alert, AlertNote } from '../lib/types';
+import type { Alert, AlertNote, AlertOccurrence } from '../lib/types';
 import { api } from '../lib/api';
 import { SeverityBadge } from './SeverityBadge';
 import { StatusBadge } from './StatusBadge';
@@ -13,9 +13,11 @@ interface AlertDetailProps {
   onClose: () => void;
   onTagAdd?: (alertId: string, tag: string) => Promise<Alert | undefined>;
   onTagRemove?: (alertId: string, tag: string) => Promise<Alert | undefined>;
+  onTagClick?: (tag: string) => void;
+  onBackToIncident?: () => void;
 }
 
-export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd, onTagRemove }: AlertDetailProps) {
+export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd, onTagRemove, onTagClick, onBackToIncident }: AlertDetailProps) {
   const isFiring = alert.status === 'firing';
   const isActive = isFiring || alert.status === 'acknowledged';
 
@@ -23,12 +25,22 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
   const [notes, setNotes] = useState<AlertNote[]>([]);
   const [notesLoading, setNotesLoading] = useState(false);
   const [noteText, setNoteText] = useState('');
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editNoteText, setEditNoteText] = useState('');
 
   // Tag input state
   const [tagInput, setTagInput] = useState('');
 
   // Raw payload toggle
   const [showRawPayload, setShowRawPayload] = useState(false);
+
+  // Ticket URL state
+  const [ticketInput, setTicketInput] = useState('');
+  const [editingTicket, setEditingTicket] = useState(false);
+
+  // Occurrence history
+  const [occurrences, setOccurrences] = useState<AlertOccurrence[]>([]);
+  const [showOccurrences, setShowOccurrences] = useState(false);
 
   // Fetch notes when alert changes
   useEffect(() => {
@@ -38,6 +50,15 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
       .catch(() => {})
       .finally(() => setNotesLoading(false));
   }, [alert.id]);
+
+  // Fetch occurrences when expanded
+  useEffect(() => {
+    if (showOccurrences) {
+      api.alerts.getHistory(alert.id)
+        .then(data => setOccurrences(data.occurrences))
+        .catch(() => setOccurrences([]));
+    }
+  }, [alert.id, showOccurrences]);
 
   const handleAddNote = useCallback(async () => {
     if (!noteText.trim()) return;
@@ -52,6 +73,21 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
     await api.alerts.deleteNote(noteId);
     setNotes(prev => prev.filter(n => n.id !== noteId));
   }, []);
+
+  const handleEditNote = useCallback(async (noteId: string) => {
+    if (!editNoteText.trim()) return;
+    try {
+      const updated = await api.alerts.updateNote(noteId, editNoteText.trim());
+      setNotes(prev => prev.map(n => n.id === noteId ? updated : n));
+      setEditingNoteId(null);
+      setEditNoteText('');
+    } catch {}
+  }, [editNoteText]);
+
+  const startEditNote = (note: AlertNote) => {
+    setEditingNoteId(note.id);
+    setEditNoteText(note.text);
+  };
 
   const handleAddTag = useCallback(async () => {
     const tag = tagInput.trim();
@@ -68,6 +104,22 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
   const handleTagKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') { e.preventDefault(); handleAddTag(); }
   };
+
+  const handleSetTicket = useCallback(async () => {
+    if (!ticketInput.trim()) return;
+    // Ensure URL has a protocol
+    let url = ticketInput.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
+    try {
+      const updated = await api.alerts.setTicketUrl(alert.id, url);
+      // Update local state so link appears immediately
+      alert.ticket_url = updated.ticket_url ?? url;
+      setEditingTicket(false);
+      setTicketInput('');
+    } catch {}
+  }, [alert, ticketInput]);
 
   // Build attributes table rows
   const attributes = [
@@ -106,6 +158,19 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
         </button>
       </div>
 
+      {/* Back to incident */}
+      {onBackToIncident && (
+        <button
+          onClick={onBackToIncident}
+          className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-blue-400 hover:bg-blue-500/10 border-b border-solace-border transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M10 4l-4 4 4 4" />
+          </svg>
+          Back to Incident
+        </button>
+      )}
+
       {/* Actions */}
       {isActive && (
         <div className="flex items-center gap-2 px-4 py-3 border-b border-solace-border">
@@ -138,7 +203,12 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
                   key={tag}
                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-400 text-xs font-mono border border-teal-500/20"
                 >
-                  {tag}
+                  <button
+                    onClick={() => onTagClick?.(tag)}
+                    className="hover:underline"
+                  >
+                    {tag}
+                  </button>
                   <button
                     onClick={() => handleRemoveTag(tag)}
                     className="ml-0.5 text-teal-400/50 hover:text-teal-400 transition-colors"
@@ -199,6 +269,87 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
           </table>
         </section>
 
+        {/* Links (generator, runbook, ticket) */}
+        <section>
+          <h3 className="text-[11px] uppercase tracking-wider text-solace-muted font-semibold mb-2">Links</h3>
+          <div className="space-y-2">
+            {alert.generator_url && (
+              <a
+                href={ensureProtocol(alert.generator_url)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
+              >
+                <ExternalLinkIcon />
+                View in source
+              </a>
+            )}
+            {alert.runbook_url && (
+              <a
+                href={ensureProtocol(alert.runbook_url)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
+              >
+                <ExternalLinkIcon />
+                Runbook
+              </a>
+            )}
+
+            {/* Ticket URL */}
+            <div>
+              {alert.ticket_url && !editingTicket ? (
+                <div className="flex items-center gap-2">
+                  <a
+                    href={ensureProtocol(alert.ticket_url)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline truncate"
+                  >
+                    <ExternalLinkIcon />
+                    External Ticket
+                  </a>
+                  <button
+                    onClick={() => { setTicketInput(alert.ticket_url || ''); setEditingTicket(true); }}
+                    className="text-[10px] text-solace-muted hover:text-solace-text transition-colors"
+                  >
+                    Edit
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={ticketInput}
+                    onChange={e => setTicketInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSetTicket(); }}
+                    placeholder="Paste ticket URL (Jira, GitHub...)"
+                    className="flex-1 px-2 py-1 text-xs font-mono bg-solace-bg border border-solace-border rounded text-solace-bright placeholder:text-solace-muted/50 focus:outline-none focus:border-blue-500/50"
+                  />
+                  <button
+                    onClick={handleSetTicket}
+                    disabled={!ticketInput.trim()}
+                    className="px-2 py-1 text-xs font-medium rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Link
+                  </button>
+                  {editingTicket && (
+                    <button
+                      onClick={() => setEditingTicket(false)}
+                      className="px-2 py-1 text-xs text-solace-muted hover:text-solace-text transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {!alert.generator_url && !alert.runbook_url && !alert.ticket_url && !editingTicket && (
+              <div className="text-xs text-solace-muted italic">No links</div>
+            )}
+          </div>
+        </section>
+
         {/* Labels */}
         {Object.keys(alert.labels).length > 0 && (
           <section>
@@ -238,6 +389,42 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
           </section>
         )}
 
+        {/* Occurrence History */}
+        <section>
+          <button
+            onClick={() => setShowOccurrences(!showOccurrences)}
+            className="text-[11px] uppercase tracking-wider text-solace-muted font-semibold mb-2 flex items-center gap-1 hover:text-solace-text transition-colors"
+          >
+            <svg
+              width="8" height="8" viewBox="0 0 8 8" fill="currentColor"
+              className={`transition-transform ${showOccurrences ? 'rotate-90' : ''}`}
+            >
+              <path d="M2 1l4 3-4 3V1z" />
+            </svg>
+            Occurrence History ({alert.duplicate_count})
+          </button>
+          {showOccurrences && (
+            <div className="relative pl-5 space-y-0 max-h-48 overflow-y-auto">
+              <div className="absolute left-[7px] top-2 bottom-2 w-px bg-solace-border" />
+              {occurrences.length === 0 ? (
+                <div className="text-xs text-solace-muted py-1 pl-2">No occurrence records</div>
+              ) : (
+                occurrences.map((occ) => (
+                  <div key={occ.id} className="relative flex items-center gap-3 py-1.5">
+                    <div className="absolute left-[-13px] top-[9px] w-2 h-2 rounded-full bg-solace-muted border-2 border-solace-surface" />
+                    <span className="text-[11px] font-mono text-solace-muted">
+                      {formatTimestamp(occ.received_at)}
+                    </span>
+                    <span className="text-[10px] text-solace-muted">
+                      {timeAgo(occ.received_at)}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </section>
+
         {/* Raw Payload */}
         {alert.raw_payload && Object.keys(alert.raw_payload).length > 0 && (
           <section>
@@ -258,24 +445,6 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
                 {JSON.stringify(alert.raw_payload, null, 2)}
               </pre>
             )}
-          </section>
-        )}
-
-        {/* Generator URL */}
-        {alert.generator_url && (
-          <section>
-            <h3 className="text-[11px] uppercase tracking-wider text-solace-muted font-semibold mb-2">Links</h3>
-            <a
-              href={alert.generator_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M6 2H2v12h12v-4M10 2h4v4M7 9l7-7" />
-              </svg>
-              View in source
-            </a>
           </section>
         )}
 
@@ -314,24 +483,64 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
             <div className="space-y-2">
               {notes.map(note => (
                 <div key={note.id} className="px-3 py-2 rounded bg-solace-bg/60 border border-solace-border/50">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-sm text-solace-text font-mono whitespace-pre-wrap break-words flex-1">
-                      {note.text}
-                    </p>
-                    <button
-                      onClick={() => handleDeleteNote(note.id)}
-                      className="flex-shrink-0 text-solace-muted hover:text-red-400 transition-colors"
-                      title="Delete note"
-                    >
-                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
-                        <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
-                      </svg>
-                    </button>
-                  </div>
-                  <div className="mt-1.5 text-[10px] text-solace-muted font-mono">
-                    {timeAgo(note.created_at)}
-                    {note.author && ` \u00b7 ${note.author}`}
-                  </div>
+                  {editingNoteId === note.id ? (
+                    <div>
+                      <textarea
+                        value={editNoteText}
+                        onChange={e => setEditNoteText(e.target.value)}
+                        rows={2}
+                        className="w-full px-2 py-1 text-sm font-mono bg-solace-bg border border-solace-border rounded text-solace-bright focus:outline-none focus:border-blue-500/50 resize-none"
+                      />
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <button
+                          onClick={() => handleEditNote(note.id)}
+                          disabled={!editNoteText.trim()}
+                          className="px-2 py-1 text-[10px] font-medium rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 disabled:opacity-30 transition-colors"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => { setEditingNoteId(null); setEditNoteText(''); }}
+                          className="px-2 py-1 text-[10px] text-solace-muted hover:text-solace-text transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm text-solace-text font-mono whitespace-pre-wrap break-words flex-1">
+                          {note.text}
+                        </p>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <button
+                            onClick={() => startEditNote(note)}
+                            className="text-solace-muted hover:text-blue-400 transition-colors"
+                            title="Edit note"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <path d="M7 1l2 2-6 6H1V7l6-6z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteNote(note.id)}
+                            className="text-solace-muted hover:text-red-400 transition-colors"
+                            title="Delete note"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                      <div className="mt-1.5 text-[10px] text-solace-muted font-mono">
+                        {timeAgo(note.created_at)}
+                        {note.author && ` \u00b7 ${note.author}`}
+                        {note.updated_at !== note.created_at && ' (edited)'}
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
@@ -340,6 +549,20 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
       </div>
     </div>
   );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M6 2H2v12h12v-4M10 2h4v4M7 9l7-7" />
+    </svg>
+  );
+}
+
+/** Ensure a URL has a protocol so <a href> doesn't treat it as relative */
+function ensureProtocol(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  return 'https://' + url;
 }
 
 function Field({ label, value, mono }: { label: string; value: string | null | undefined; mono?: boolean }) {

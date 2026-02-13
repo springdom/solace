@@ -6,12 +6,15 @@ import { timeAgo, duration } from '../lib/time';
 interface AlertRowProps {
   alert: Alert;
   selected: boolean;
+  checked?: boolean;
+  showCheckbox?: boolean;
   onSelect: (alert: Alert) => void;
   onAcknowledge: (id: string) => void;
   onResolve: (id: string) => void;
+  onToggleCheck?: (id: string) => void;
 }
 
-export function AlertRow({ alert, selected, onSelect, onAcknowledge, onResolve }: AlertRowProps) {
+export function AlertRow({ alert, selected, checked, showCheckbox, onSelect, onAcknowledge, onResolve, onToggleCheck }: AlertRowProps) {
   const isFiring = alert.status === 'firing';
   const isCriticalFiring = isFiring && alert.severity === 'critical';
 
@@ -27,6 +30,18 @@ export function AlertRow({ alert, selected, onSelect, onAcknowledge, onResolve }
         ${isCriticalFiring ? 'severity-pulse-critical' : ''}
       `}
     >
+      {/* Checkbox */}
+      {showCheckbox && (
+        <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={checked || false}
+            onChange={() => onToggleCheck?.(alert.id)}
+            className="rounded border-solace-border bg-solace-bg text-blue-500 focus:ring-0 focus:ring-offset-0"
+          />
+        </div>
+      )}
+
       {/* Severity */}
       <div className="flex-shrink-0 w-16">
         <SeverityBadge severity={alert.severity} pulse={isFiring} />
@@ -40,7 +55,7 @@ export function AlertRow({ alert, selected, onSelect, onAcknowledge, onResolve }
           </span>
           {alert.duplicate_count > 1 && (
             <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-solace-border text-[10px] font-mono text-solace-muted">
-              ×{alert.duplicate_count}
+              x{alert.duplicate_count}
             </span>
           )}
         </div>

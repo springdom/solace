@@ -4,6 +4,7 @@ import { api } from './lib/api';
 import { useAlertStore } from './stores/alertStore';
 import { useIncidentStore } from './stores/incidentStore';
 import { useStatsStore } from './stores/statsStore';
+import { useSettingsStore } from './stores/settingsStore';
 import { useWSStore } from './stores/wsStore';
 import { AlertRow } from './components/AlertRow';
 import { AlertDetail } from './components/AlertDetail';
@@ -18,13 +19,14 @@ import { SilenceList } from './components/SilenceList';
 import { NotificationChannelList } from './components/NotificationChannelList';
 import type { SortOption } from './components/SortControl';
 
-type View = 'alerts' | 'incidents' | 'silences' | 'channels';
+type View = 'alerts' | 'incidents' | 'silences' | 'channels' | 'settings';
 
 const ALERT_STATUS_TABS = [
   { key: '', label: 'All' },
   { key: 'firing', label: 'Firing' },
   { key: 'acknowledged', label: 'Acknowledged' },
   { key: 'resolved', label: 'Resolved' },
+  { key: 'archived', label: 'Archived' },
 ] as const;
 
 const INCIDENT_STATUS_TABS = [
@@ -88,6 +90,7 @@ export default function App() {
 
   // View state (local — purely UI)
   const [view, setView] = useState<View>('incidents');
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false);
 
   // Alert store
   const alerts = useAlertStore((s) => s.alerts);
@@ -105,6 +108,14 @@ export default function App() {
   const removeTag = useAlertStore((s) => s.removeTag);
   const refetchAlerts = useAlertStore((s) => s.fetchAlerts);
 
+  // Bulk selection
+  const selectedIds = useAlertStore((s) => s.selectedIds);
+  const toggleSelect = useAlertStore((s) => s.toggleSelect);
+  const selectAll = useAlertStore((s) => s.selectAll);
+  const clearSelection = useAlertStore((s) => s.clearSelection);
+  const bulkAcknowledge = useAlertStore((s) => s.bulkAcknowledge);
+  const bulkResolve = useAlertStore((s) => s.bulkResolve);
+
   // Incident store
   const incidents = useIncidentStore((s) => s.incidents);
   const incidentTotal = useIncidentStore((s) => s.total);
@@ -120,6 +131,11 @@ export default function App() {
 
   // Stats store
   const stats = useStatsStore((s) => s.stats);
+
+  // Settings store
+  const settingsData = useSettingsStore((s) => s.settings);
+  const settingsLoading = useSettingsStore((s) => s.loading);
+  const fetchSettings = useSettingsStore((s) => s.fetchSettings);
 
   const severityCounts = useMemo(() => {
     if (!stats) return { critical: 0, high: 0, warning: 0, low: 0, info: 0 };
@@ -163,17 +179,136 @@ export default function App() {
     }
   }, [selectAlert]);
 
+  const handleTagClick = useCallback((tag: string) => {
+    setAlertFilters({ tag, page: 1 });
+  }, [setAlertFilters]);
+
   const switchView = (newView: View) => {
     setView(newView);
     selectAlert(null);
     selectIncident(null);
+    clearSelection();
+    if (newView === 'settings' && !settingsData) {
+      fetchSettings();
+    }
   };
 
-  const hasAlertFilters = !!(alertFilters.status || alertFilters.severity || alertFilters.search || alertFilters.sortBy !== 'created_at');
+  const hasAlertFilters = !!(alertFilters.status || alertFilters.severity || alertFilters.tag || alertFilters.search || alertFilters.sortBy !== 'created_at');
   const hasIncidentFilters = !!(incidentFilters.status || incidentFilters.search || incidentFilters.sortBy !== 'started_at');
+
+  const hasBulkSelection = selectedIds.size > 0;
+
+  // Archive action state
+  const [archiveDays, setArchiveDays] = useState(30);
+  const [archiveResult, setArchiveResult] = useState<string | null>(null);
+
+  const handleArchive = async () => {
+    try {
+      const result = await api.alerts.archive(archiveDays);
+      setArchiveResult(`Archived ${result.archived} alert(s)`);
+      setTimeout(() => setArchiveResult(null), 3000);
+    } catch {
+      setArchiveResult('Archive failed');
+      setTimeout(() => setArchiveResult(null), 3000);
+    }
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Skip if typing in an input
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') return;
+
+      switch (e.key) {
+        case '?':
+          e.preventDefault();
+          setShowShortcutHelp(prev => !prev);
+          break;
+        case 'Escape':
+          if (showShortcutHelp) {
+            setShowShortcutHelp(false);
+          } else if (selectedAlert) {
+            selectAlert(null);
+          } else if (selectedIncident) {
+            selectIncident(null);
+          }
+          break;
+        case 'a':
+          if (selectedAlert && selectedAlert.status === 'firing') {
+            handleAlertAck(selectedAlert.id);
+          } else if (selectedIncident && selectedIncident.status === 'open') {
+            handleIncidentAck(selectedIncident.id);
+          }
+          break;
+        case 'r':
+          if (selectedAlert && (selectedAlert.status === 'firing' || selectedAlert.status === 'acknowledged')) {
+            handleAlertResolve(selectedAlert.id);
+          } else if (selectedIncident && (selectedIncident.status === 'open' || selectedIncident.status === 'acknowledged')) {
+            handleIncidentResolve(selectedIncident.id);
+          }
+          break;
+        case 'j': {
+          e.preventDefault();
+          if (view === 'alerts') {
+            const idx = alerts.findIndex(a => a.id === selectedAlert?.id);
+            const next = alerts[idx + 1];
+            if (next) selectAlert(next);
+            else if (!selectedAlert && alerts.length > 0) selectAlert(alerts[0]);
+          } else if (view === 'incidents') {
+            const idx = incidents.findIndex(i => i.id === selectedIncident?.id);
+            const next = incidents[idx + 1];
+            if (next) selectIncident(next);
+            else if (!selectedIncident && incidents.length > 0) selectIncident(incidents[0]);
+          }
+          break;
+        }
+        case 'k': {
+          e.preventDefault();
+          if (view === 'alerts') {
+            const idx = alerts.findIndex(a => a.id === selectedAlert?.id);
+            const prev = alerts[idx - 1];
+            if (prev) selectAlert(prev);
+          } else if (view === 'incidents') {
+            const idx = incidents.findIndex(i => i.id === selectedIncident?.id);
+            const prev = incidents[idx - 1];
+            if (prev) selectIncident(prev);
+          }
+          break;
+        }
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [view, alerts, incidents, selectedAlert, selectedIncident, showShortcutHelp]);
 
   return (
     <div className="h-screen flex flex-col bg-solace-bg">
+      {/* Keyboard shortcut help overlay */}
+      {showShortcutHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowShortcutHelp(false)}>
+          <div className="bg-solace-surface border border-solace-border rounded-lg p-6 max-w-sm shadow-xl" onClick={e => e.stopPropagation()}>
+            <h2 className="text-base font-semibold text-solace-bright mb-4">Keyboard Shortcuts</h2>
+            <div className="space-y-2 text-sm">
+              {[
+                ['?', 'Toggle this help'],
+                ['Esc', 'Close panel / dismiss'],
+                ['a', 'Acknowledge selected'],
+                ['r', 'Resolve selected'],
+                ['j', 'Next item in list'],
+                ['k', 'Previous item in list'],
+              ].map(([key, desc]) => (
+                <div key={key} className="flex items-center gap-3">
+                  <kbd className="px-2 py-0.5 rounded bg-solace-bg border border-solace-border text-solace-bright font-mono text-xs min-w-[28px] text-center">{key}</kbd>
+                  <span className="text-solace-text">{desc}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 text-xs text-solace-muted">Press ? or click outside to close</div>
+          </div>
+        </div>
+      )}
+
       {/* ─── Header ─────────────────────────────────────── */}
       <header className="flex-shrink-0 flex items-center justify-between px-5 py-3 border-b border-solace-border bg-solace-bg">
         <div className="flex items-center gap-4">
@@ -191,59 +326,26 @@ export default function App() {
 
           {/* View toggle */}
           <div className="flex items-center bg-solace-surface rounded-lg p-0.5">
-            <button
-              onClick={() => switchView('incidents')}
-              className={`
-                relative px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-                ${view === 'incidents'
-                  ? 'bg-solace-bg text-solace-bright shadow-sm'
-                  : 'text-solace-muted hover:text-solace-text'
-                }
-              `}
-            >
-              Incidents
-              {openIncidentCount > 0 && (
-                <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500/20 text-red-400 text-[10px] font-mono font-bold">
-                  {openIncidentCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => switchView('alerts')}
-              className={`
-                px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-                ${view === 'alerts'
-                  ? 'bg-solace-bg text-solace-bright shadow-sm'
-                  : 'text-solace-muted hover:text-solace-text'
-                }
-              `}
-            >
-              Alerts
-            </button>
-            <button
-              onClick={() => switchView('silences')}
-              className={`
-                px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-                ${view === 'silences'
-                  ? 'bg-solace-bg text-solace-bright shadow-sm'
-                  : 'text-solace-muted hover:text-solace-text'
-                }
-              `}
-            >
-              Silences
-            </button>
-            <button
-              onClick={() => switchView('channels')}
-              className={`
-                px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-                ${view === 'channels'
-                  ? 'bg-solace-bg text-solace-bright shadow-sm'
-                  : 'text-solace-muted hover:text-solace-text'
-                }
-              `}
-            >
-              Channels
-            </button>
+            {(['incidents', 'alerts', 'silences', 'channels', 'settings'] as const).map(v => (
+              <button
+                key={v}
+                onClick={() => switchView(v)}
+                className={`
+                  px-3 py-1.5 text-xs font-medium rounded-md transition-colors
+                  ${view === v
+                    ? 'bg-solace-bg text-solace-bright shadow-sm'
+                    : 'text-solace-muted hover:text-solace-text'
+                  }
+                `}
+              >
+                {v.charAt(0).toUpperCase() + v.slice(1)}
+                {v === 'incidents' && openIncidentCount > 0 && (
+                  <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500/20 text-red-400 text-[10px] font-mono font-bold">
+                    {openIncidentCount}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
 
           <div className="w-px h-5 bg-solace-border" />
@@ -314,6 +416,24 @@ export default function App() {
                   {sev.label}
                 </button>
               ))}
+
+              {/* Tag filter chip */}
+              {alertFilters.tag && (
+                <>
+                  <div className="w-px h-4 bg-solace-border mx-1" />
+                  <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-teal-500/10 text-teal-400 text-[10px] font-mono border border-teal-500/20">
+                    tag: {alertFilters.tag}
+                    <button
+                      onClick={() => setAlertFilters({ tag: undefined, page: 1 })}
+                      className="ml-0.5 text-teal-400/50 hover:text-teal-400"
+                    >
+                      <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path d="M2 2l4 4M6 2l-4 4" />
+                      </svg>
+                    </button>
+                  </span>
+                </>
+              )}
             </>
           ) : (
             INCIDENT_STATUS_TABS.map(tab => (
@@ -373,11 +493,46 @@ export default function App() {
       </div>
 
       }
+
+      {/* Bulk actions toolbar */}
+      {view === 'alerts' && hasBulkSelection && (
+        <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 border-b border-blue-500/20 bg-blue-500/5">
+          <span className="text-xs font-mono text-blue-400">{selectedIds.size} selected</span>
+          <button
+            onClick={bulkAcknowledge}
+            className="px-3 py-1 text-xs font-medium rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
+          >
+            Acknowledge
+          </button>
+          <button
+            onClick={bulkResolve}
+            className="px-3 py-1 text-xs font-medium rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+          >
+            Resolve
+          </button>
+          <button
+            onClick={clearSelection}
+            className="px-3 py-1 text-xs font-medium text-solace-muted hover:text-solace-text transition-colors"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {/* ─── Stats Bar ──────────────────────────────────── */}
       {(view === 'alerts' || view === 'incidents') && <StatsBar stats={stats} />}
 
       {/* ─── Body ───────────────────────────────────────── */}
-      {view === 'silences' ? (
+      {view === 'settings' ? (
+        <SettingsView
+          settings={settingsData}
+          loading={settingsLoading}
+          archiveDays={archiveDays}
+          setArchiveDays={setArchiveDays}
+          onArchive={handleArchive}
+          archiveResult={archiveResult}
+        />
+      ) : view === 'silences' ? (
         <div className="flex-1 min-h-0">
           <SilenceList />
         </div>
@@ -392,6 +547,15 @@ export default function App() {
           {/* Column headers */}
           {view === 'alerts' ? (
             <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 border-b border-solace-border bg-solace-surface/20">
+              {/* Select all checkbox */}
+              <div className="flex-shrink-0 w-5" onClick={e => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={selectedIds.size > 0 && selectedIds.size === alerts.length}
+                  onChange={() => selectedIds.size === alerts.length ? clearSelection() : selectAll()}
+                  className="rounded border-solace-border bg-solace-bg text-blue-500 focus:ring-0 focus:ring-offset-0"
+                />
+              </div>
               <div className="w-16">
                 <ColumnHeader label="Severity" sortKey="severity" currentSort={alertFilters.sortBy} currentOrder={alertFilters.sortOrder}
                   onSort={k => { setAlertFilters({ sortBy: k, sortOrder: alertFilters.sortBy === k && alertFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
@@ -463,9 +627,12 @@ export default function App() {
                       key={alert.id}
                       alert={alert}
                       selected={selectedAlert?.id === alert.id}
+                      checked={selectedIds.has(alert.id)}
+                      showCheckbox={true}
                       onSelect={selectAlert}
                       onAcknowledge={handleAlertAck}
                       onResolve={handleAlertResolve}
+                      onToggleCheck={toggleSelect}
                     />
                   ))}
                 </div>
@@ -520,7 +687,6 @@ export default function App() {
         </div>
 
         {/* Detail panel */}
-        {/* Alert detail panel — shown in alerts view OR when drilled in from incident */}
         {selectedAlert && (
           <div className="w-[400px] flex-shrink-0">
             <AlertDetail
@@ -536,6 +702,8 @@ export default function App() {
                 const updated = await removeTag(alertId, tag);
                 return updated;
               }}
+              onTagClick={handleTagClick}
+              onBackToIncident={view === 'incidents' && selectedIncident ? () => selectAlert(null) : undefined}
             />
           </div>
         )}
@@ -552,6 +720,114 @@ export default function App() {
         )}
       </div>
       )}
+    </div>
+  );
+}
+
+function SettingsView({
+  settings,
+  loading,
+  archiveDays,
+  setArchiveDays,
+  onArchive,
+  archiveResult,
+}: {
+  settings: import('./lib/types').AppSettings | null;
+  loading: boolean;
+  archiveDays: number;
+  setArchiveDays: (n: number) => void;
+  onArchive: () => void;
+  archiveResult: string | null;
+}) {
+  if (loading && !settings) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <span className="text-sm text-solace-muted">Loading settings...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full space-y-6">
+      <h1 className="text-lg font-semibold text-solace-bright">Settings</h1>
+
+      {/* General */}
+      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+        <h2 className="text-sm font-semibold text-solace-bright mb-3">General</h2>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">App Name</span>
+            <span className="text-solace-bright font-mono">{settings?.app_name || '—'}</span>
+          </div>
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">Environment</span>
+            <span className="text-solace-bright font-mono">{settings?.app_env || '—'}</span>
+          </div>
+        </div>
+      </section>
+
+      {/* Alert Processing */}
+      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+        <h2 className="text-sm font-semibold text-solace-bright mb-3">Alert Processing</h2>
+        <div className="grid grid-cols-3 gap-4 text-sm">
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">Dedup Window</span>
+            <span className="text-solace-bright font-mono">{settings?.dedup_window_seconds ?? '—'}s</span>
+          </div>
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">Correlation Window</span>
+            <span className="text-solace-bright font-mono">{settings?.correlation_window_seconds ?? '—'}s</span>
+          </div>
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">Notification Cooldown</span>
+            <span className="text-solace-bright font-mono">{settings?.notification_cooldown_seconds ?? '—'}s</span>
+          </div>
+        </div>
+      </section>
+
+      {/* Alert Retention / Archive */}
+      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+        <h2 className="text-sm font-semibold text-solace-bright mb-3">Alert Retention</h2>
+        <p className="text-xs text-solace-muted mb-3">
+          Archive resolved alerts older than a specified number of days. Archived alerts remain accessible under the "Archived" tab.
+        </p>
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-solace-text">Archive resolved alerts older than</label>
+          <input
+            type="number"
+            min={1}
+            value={archiveDays}
+            onChange={e => setArchiveDays(Number(e.target.value) || 1)}
+            className="w-20 px-2 py-1 text-sm font-mono bg-solace-bg border border-solace-border rounded text-solace-bright focus:outline-none focus:border-emerald-500/50"
+          />
+          <span className="text-sm text-solace-text">days</span>
+          <button
+            onClick={onArchive}
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
+          >
+            Archive Now
+          </button>
+          {archiveResult && (
+            <span className="text-xs font-mono text-emerald-400">{archiveResult}</span>
+          )}
+        </div>
+      </section>
+
+      {/* Dashboard URL */}
+      {settings?.solace_dashboard_url && (
+        <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+          <h2 className="text-sm font-semibold text-solace-bright mb-3">Dashboard URL</h2>
+          <span className="text-sm text-solace-bright font-mono break-all">{settings.solace_dashboard_url}</span>
+        </section>
+      )}
+
+      {/* Profile placeholder */}
+      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+        <h2 className="text-sm font-semibold text-solace-bright mb-2">Profile</h2>
+        <p className="text-xs text-solace-muted">
+          User profiles and authentication coming soon. This will include login, user roles, and notification preferences.
+        </p>
+      </section>
     </div>
   );
 }

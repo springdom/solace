@@ -40,6 +40,8 @@ class NormalizedAlert:
         starts_at: datetime | None = None,
         ends_at: datetime | None = None,
         generator_url: str | None = None,
+        runbook_url: str | None = None,
+        ticket_url: str | None = None,
         raw_payload: dict | None = None,
     ):
         self.name = name
@@ -57,6 +59,8 @@ class NormalizedAlert:
         self.starts_at = starts_at or datetime.now(UTC)
         self.ends_at = ends_at
         self.generator_url = generator_url
+        self.runbook_url = runbook_url
+        self.ticket_url = ticket_url
         self.raw_payload = raw_payload
 
 
@@ -111,6 +115,8 @@ class GenericNormalizer(BaseNormalizer):
             starts_at=data.starts_at,
             ends_at=data.ends_at,
             generator_url=data.generator_url,
+            runbook_url=data.runbook_url,
+            ticket_url=data.ticket_url,
             raw_payload=payload,
         )
 

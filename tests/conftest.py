@@ -55,6 +55,9 @@ def _make_alert(**overrides) -> Alert:
         "resolved_at": None,
         "duplicate_count": 1,
         "generator_url": None,
+        "runbook_url": None,
+        "ticket_url": None,
+        "archived_at": None,
         "incident_id": None,
         "created_at": now,
         "updated_at": now,
@@ -89,6 +92,7 @@ def _make_incident(**overrides) -> Incident:
         "status": IncidentStatus.OPEN,
         "severity": Severity.WARNING,
         "summary": "Test description",
+        "phase": None,
         "started_at": now,
         "acknowledged_at": None,
         "resolved_at": None,
@@ -104,7 +108,7 @@ def _make_incident(**overrides) -> Incident:
 
     # Make __table__.columns work
     col_keys = [
-        "id", "title", "status", "severity", "summary", "started_at",
+        "id", "title", "status", "severity", "summary", "phase", "started_at",
         "acknowledged_at", "resolved_at", "assigned_to", "created_at", "updated_at",
     ]
     cols = []

@@ -1,11 +1,12 @@
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models import Alert
+from backend.models import Alert, AlertOccurrence
 from backend.schemas import (
     AlertAckRequest,
     AlertListResponse,
@@ -13,12 +14,20 @@ from backend.schemas import (
     AlertNoteListResponse,
     AlertNoteResponse,
     AlertNoteUpdate,
+    AlertOccurrenceListResponse,
+    AlertOccurrenceResponse,
     AlertResponse,
     AlertTagsUpdate,
+    AlertTicketUpdate,
+    BulkAlertActionRequest,
+    BulkAlertActionResponse,
 )
 from backend.services import (
     acknowledge_alert,
     add_alert_tag,
+    archive_alerts,
+    bulk_acknowledge_alerts,
+    bulk_resolve_alerts,
     create_alert_note,
     delete_alert_note,
     get_alert_notes,
@@ -67,6 +76,52 @@ async def remove_note(
         raise HTTPException(status_code=404, detail="Note not found")
 
 
+# ─── Bulk actions ──────────────────────────────────────────
+
+
+@router.post(
+    "/bulk/acknowledge",
+    response_model=BulkAlertActionResponse,
+    summary="Bulk acknowledge alerts",
+)
+async def bulk_acknowledge(
+    body: BulkAlertActionRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BulkAlertActionResponse:
+    """Acknowledge multiple alerts at once."""
+    updated_ids = await bulk_acknowledge_alerts(db, body.alert_ids)
+    return BulkAlertActionResponse(updated=len(updated_ids), alert_ids=updated_ids)
+
+
+@router.post(
+    "/bulk/resolve",
+    response_model=BulkAlertActionResponse,
+    summary="Bulk resolve alerts",
+)
+async def bulk_resolve(
+    body: BulkAlertActionRequest,
+    db: AsyncSession = Depends(get_db),
+) -> BulkAlertActionResponse:
+    """Resolve multiple alerts at once."""
+    updated_ids = await bulk_resolve_alerts(db, body.alert_ids)
+    return BulkAlertActionResponse(updated=len(updated_ids), alert_ids=updated_ids)
+
+
+@router.post(
+    "/archive",
+    summary="Archive old resolved alerts",
+)
+async def archive_old_alerts(
+    older_than_days: int = Query(
+        default=30, ge=1, description="Archive resolved alerts older than N days",
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Archive resolved alerts that are older than the specified number of days."""
+    count = await archive_alerts(db, older_than_days=older_than_days)
+    return {"archived": count}
+
+
 # ─── Alert list & detail ──────────────────────────────────
 
 
@@ -79,7 +134,8 @@ async def list_alerts(
     status: str | None = Query(default=None, description="Filter by status"),
     severity: str | None = Query(default=None, description="Filter by severity"),
     service: str | None = Query(default=None, description="Filter by service"),
-    q: str | None = Query(default=None, description="Search name, service, host, description"),
+    q: str | None = Query(default=None, description="Search across name, service, host, tags"),
+    tag: str | None = Query(default=None, description="Filter by exact tag"),
     sort_by: str = Query(default="created_at", description="Sort field"),
     sort_order: str = Query(default="desc", pattern="^(asc|desc)$", description="Sort order"),
     page: int = Query(default=1, ge=1, description="Page number"),
@@ -89,7 +145,7 @@ async def list_alerts(
     """List alerts with optional filtering, search, sorting, and pagination."""
     alerts, total = await get_alerts(
         db, status=status, severity=severity, service=service,
-        search=q, sort_by=sort_by, sort_order=sort_order,
+        search=q, tag=tag, sort_by=sort_by, sort_order=sort_order,
         page=page, page_size=page_size,
     )
 
@@ -253,3 +309,59 @@ async def add_note(
     except ValueError:
         raise HTTPException(status_code=404, detail="Alert not found")
     return AlertNoteResponse.model_validate(note)
+
+
+# ─── Ticket URL ────────────────────────────────────────────
+
+
+@router.put(
+    "/{alert_id}/ticket",
+    response_model=AlertResponse,
+    summary="Set or update external ticket URL",
+)
+async def set_ticket_url(
+    alert_id: uuid.UUID,
+    body: AlertTicketUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> AlertResponse:
+    """Link an alert to an external ticket (Jira, GitHub issue, etc)."""
+    stmt = select(Alert).where(Alert.id == alert_id)
+    result = await db.execute(stmt)
+    alert = result.scalar_one_or_none()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    url = body.ticket_url.strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    alert.ticket_url = url
+    alert.updated_at = datetime.now(UTC)
+    await db.flush()
+    await db.refresh(alert)
+    return AlertResponse.model_validate(alert)
+
+
+# ─── Occurrence History ────────────────────────────────────
+
+
+@router.get(
+    "/{alert_id}/history",
+    response_model=AlertOccurrenceListResponse,
+    summary="Get alert occurrence history",
+)
+async def get_alert_history(
+    alert_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> AlertOccurrenceListResponse:
+    """Get the timeline of when this alert (and its duplicates) were received."""
+    stmt = (
+        select(AlertOccurrence)
+        .where(AlertOccurrence.alert_id == alert_id)
+        .order_by(AlertOccurrence.received_at.desc())
+        .limit(100)
+    )
+    result = await db.execute(stmt)
+    occurrences = list(result.scalars().all())
+    return AlertOccurrenceListResponse(
+        occurrences=[AlertOccurrenceResponse.model_validate(o) for o in occurrences],
+        total=len(occurrences),
+    )

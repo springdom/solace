@@ -1,5 +1,5 @@
 export type Severity = 'critical' | 'high' | 'warning' | 'low' | 'info';
-export type AlertStatus = 'firing' | 'acknowledged' | 'resolved' | 'suppressed';
+export type AlertStatus = 'firing' | 'acknowledged' | 'resolved' | 'suppressed' | 'archived';
 export type IncidentStatus = 'open' | 'acknowledged' | 'resolved';
 
 export interface Alert {
@@ -25,6 +25,9 @@ export interface Alert {
   resolved_at: string | null;
   duplicate_count: number;
   generator_url: string | null;
+  runbook_url: string | null;
+  ticket_url: string | null;
+  archived_at: string | null;
   incident_id: string | null;
   created_at: string;
   updated_at: string;
@@ -69,6 +72,7 @@ export interface Incident {
   status: IncidentStatus;
   severity: Severity;
   summary: string | null;
+  phase: string | null;
   started_at: string;
   acknowledged_at: string | null;
   resolved_at: string | null;
@@ -162,4 +166,24 @@ export interface NotificationLogListResponse {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface AlertOccurrence {
+  id: string;
+  alert_id: string;
+  received_at: string;
+}
+
+export interface AlertOccurrenceListResponse {
+  occurrences: AlertOccurrence[];
+  total: number;
+}
+
+export interface AppSettings {
+  app_name: string;
+  app_env: string;
+  dedup_window_seconds: number;
+  correlation_window_seconds: number;
+  notification_cooldown_seconds: number;
+  solace_dashboard_url: string;
 }

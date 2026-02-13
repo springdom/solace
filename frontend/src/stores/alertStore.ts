@@ -6,6 +6,7 @@ import type { AlertListParams } from '../lib/api';
 export interface AlertFilters {
   status?: string;
   severity?: string;
+  tag?: string;
   search?: string;
   sortBy: string;
   sortOrder: 'asc' | 'desc';
@@ -21,6 +22,9 @@ interface AlertState {
   filters: AlertFilters;
   selectedAlert: Alert | null;
 
+  // Bulk selection
+  selectedIds: Set<string>;
+
   // Actions
   fetchAlerts: () => Promise<void>;
   setFilters: (partial: Partial<AlertFilters>) => void;
@@ -30,6 +34,13 @@ interface AlertState {
   resolve: (id: string) => Promise<void>;
   addTag: (alertId: string, tag: string) => Promise<Alert | undefined>;
   removeTag: (alertId: string, tag: string) => Promise<Alert | undefined>;
+
+  // Bulk actions
+  toggleSelect: (id: string) => void;
+  selectAll: () => void;
+  clearSelection: () => void;
+  bulkAcknowledge: () => Promise<void>;
+  bulkResolve: () => Promise<void>;
 }
 
 const DEFAULT_FILTERS: AlertFilters = {
@@ -46,6 +57,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
   error: null,
   filters: { ...DEFAULT_FILTERS },
   selectedAlert: null,
+  selectedIds: new Set(),
 
   fetchAlerts: async () => {
     try {
@@ -53,6 +65,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       const params: AlertListParams = {
         status: f.status,
         severity: f.severity,
+        tag: f.tag,
         q: f.search,
         sort_by: f.sortBy,
         sort_order: f.sortOrder,
@@ -75,7 +88,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
   },
 
   resetFilters: () => {
-    set({ filters: { ...DEFAULT_FILTERS }, selectedAlert: null, loading: true });
+    set({ filters: { ...DEFAULT_FILTERS }, selectedAlert: null, selectedIds: new Set(), loading: true });
     get().fetchAlerts();
   },
 
@@ -132,6 +145,47 @@ export const useAlertStore = create<AlertState>((set, get) => ({
       return updated;
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Failed to remove tag' });
+    }
+  },
+
+  toggleSelect: (id) => {
+    set((state) => {
+      const next = new Set(state.selectedIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return { selectedIds: next };
+    });
+  },
+
+  selectAll: () => {
+    set((state) => ({
+      selectedIds: new Set(state.alerts.map(a => a.id)),
+    }));
+  },
+
+  clearSelection: () => set({ selectedIds: new Set() }),
+
+  bulkAcknowledge: async () => {
+    const ids = Array.from(get().selectedIds);
+    if (ids.length === 0) return;
+    try {
+      await api.alerts.bulkAcknowledge(ids);
+      set({ selectedIds: new Set() });
+      await get().fetchAlerts();
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'Bulk acknowledge failed' });
+    }
+  },
+
+  bulkResolve: async () => {
+    const ids = Array.from(get().selectedIds);
+    if (ids.length === 0) return;
+    try {
+      await api.alerts.bulkResolve(ids);
+      set({ selectedIds: new Set() });
+      await get().fetchAlerts();
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'Bulk resolve failed' });
     }
   },
 }));

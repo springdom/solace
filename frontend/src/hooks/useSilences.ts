@@ -25,6 +25,7 @@ export function useSilences(opts: UseSilencesOptions = {}) {
     loading: store.loading,
     error: store.error,
     createSilence: store.createSilence,
+    updateSilence: store.updateSilence,
     deleteSilence: store.deleteSilence,
     refetch: store.fetchSilences,
   };

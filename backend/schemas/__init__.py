@@ -12,6 +12,7 @@ class AlertStatusEnum(StrEnum):
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
     SUPPRESSED = "suppressed"
+    ARCHIVED = "archived"
 
 
 class SeverityEnum(StrEnum):
@@ -65,6 +66,12 @@ class GenericWebhookPayload(BaseModel):
     generator_url: str | None = Field(
         default=None, description="URL to the source that generated this alert"
     )
+    runbook_url: str | None = Field(
+        default=None, description="Link to runbook for this alert"
+    )
+    ticket_url: str | None = Field(
+        default=None, description="Link to external ticket (Jira, etc)"
+    )
 
 
 # ─── Alert Responses ─────────────────────────────────────
@@ -95,6 +102,9 @@ class AlertResponse(BaseModel):
     resolved_at: datetime | None
     duplicate_count: int
     generator_url: str | None
+    runbook_url: str | None = None
+    ticket_url: str | None = None
+    archived_at: datetime | None = None
     incident_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
@@ -172,6 +182,43 @@ class AlertNoteListResponse(BaseModel):
     total: int
 
 
+# ─── Alert Ticket ──────────────────────────────────────────
+
+
+class AlertTicketUpdate(BaseModel):
+    """Set or update the external ticket URL on an alert."""
+
+    ticket_url: str = Field(..., max_length=2000, description="External ticket URL")
+
+
+# ─── Alert Occurrence History ──────────────────────────────
+
+
+class AlertOccurrenceResponse(BaseModel):
+    id: uuid.UUID
+    alert_id: uuid.UUID
+    received_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AlertOccurrenceListResponse(BaseModel):
+    occurrences: list[AlertOccurrenceResponse]
+    total: int
+
+
+# ─── Bulk Alert Actions ────────────────────────────────────
+
+
+class BulkAlertActionRequest(BaseModel):
+    alert_ids: list[uuid.UUID] = Field(..., min_length=1, max_length=100)
+
+
+class BulkAlertActionResponse(BaseModel):
+    updated: int
+    alert_ids: list[uuid.UUID]
+
+
 # ─── Incident Responses ──────────────────────────────────
 
 
@@ -197,6 +244,7 @@ class IncidentResponse(BaseModel):
     status: IncidentStatusEnum
     severity: SeverityEnum
     summary: str | None
+    phase: str | None = None
     started_at: datetime
     acknowledged_at: datetime | None
     resolved_at: datetime | None
@@ -214,6 +262,7 @@ class IncidentDetailResponse(BaseModel):
     status: IncidentStatusEnum
     severity: SeverityEnum
     summary: str | None
+    phase: str | None = None
     started_at: datetime
     acknowledged_at: datetime | None
     resolved_at: datetime | None

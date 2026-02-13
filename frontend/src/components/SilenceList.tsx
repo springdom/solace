@@ -14,18 +14,33 @@ function isActive(w: SilenceWindow): boolean {
   return w.is_active && new Date(w.starts_at).getTime() <= now && new Date(w.ends_at).getTime() >= now;
 }
 
+function toLocalDatetime(isoStr: string): string {
+  const d = new Date(isoStr);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export function SilenceList() {
   const [stateFilter, setStateFilter] = useState('all');
   const [showForm, setShowForm] = useState(false);
-  const { windows, loading, error, createSilence, deleteSilence } = useSilences({ state: stateFilter });
+  const { windows, loading, error, createSilence, updateSilence, deleteSilence } = useSilences({ state: stateFilter });
 
-  // Form state
+  // Create form state
   const [formName, setFormName] = useState('');
   const [formServices, setFormServices] = useState('');
   const [formSeverities, setFormSeverities] = useState('');
   const [formStartsAt, setFormStartsAt] = useState('');
   const [formEndsAt, setFormEndsAt] = useState('');
   const [formReason, setFormReason] = useState('');
+
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editServices, setEditServices] = useState('');
+  const [editSeverities, setEditSeverities] = useState('');
+  const [editStartsAt, setEditStartsAt] = useState('');
+  const [editEndsAt, setEditEndsAt] = useState('');
+  const [editReason, setEditReason] = useState('');
 
   const handleCreate = async () => {
     if (!formName || !formStartsAt || !formEndsAt) return;
@@ -54,6 +69,40 @@ export function SilenceList() {
     setFormReason('');
     setShowForm(false);
   };
+
+  const startEdit = (w: SilenceWindow) => {
+    setEditingId(w.id);
+    setEditName(w.name);
+    setEditServices(w.matchers.service?.join(', ') || '');
+    setEditSeverities(w.matchers.severity?.join(', ') || '');
+    setEditStartsAt(toLocalDatetime(w.starts_at));
+    setEditEndsAt(toLocalDatetime(w.ends_at));
+    setEditReason(w.reason || '');
+  };
+
+  const handleUpdate = async () => {
+    if (!editingId || !editName || !editStartsAt || !editEndsAt) return;
+
+    const matchers: Record<string, unknown> = {};
+    if (editServices.trim()) {
+      matchers.service = editServices.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    if (editSeverities.trim()) {
+      matchers.severity = editSeverities.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    await updateSilence(editingId, {
+      name: editName,
+      matchers,
+      starts_at: new Date(editStartsAt).toISOString(),
+      ends_at: new Date(editEndsAt).toISOString(),
+      reason: editReason || null,
+    });
+    setEditingId(null);
+  };
+
+  const inputClass = "w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50";
+  const labelClass = "block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1";
 
   return (
     <div className="flex flex-col h-full">
@@ -87,62 +136,28 @@ export function SilenceList() {
         <div className="flex-shrink-0 border-b border-solace-border bg-solace-surface/30 p-4">
           <div className="grid grid-cols-2 gap-3 max-w-2xl">
             <div className="col-span-2">
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Name</label>
-              <input
-                type="text"
-                value={formName}
-                onChange={e => setFormName(e.target.value)}
-                placeholder="Maintenance window name"
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Name</label>
+              <input type="text" value={formName} onChange={e => setFormName(e.target.value)} placeholder="Maintenance window name" className={inputClass} />
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Services (comma-separated)</label>
-              <input
-                type="text"
-                value={formServices}
-                onChange={e => setFormServices(e.target.value)}
-                placeholder="api, web (empty = all)"
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Services (comma-separated)</label>
+              <input type="text" value={formServices} onChange={e => setFormServices(e.target.value)} placeholder="api, web (empty = all)" className={inputClass} />
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Severities (comma-separated)</label>
-              <input
-                type="text"
-                value={formSeverities}
-                onChange={e => setFormSeverities(e.target.value)}
-                placeholder="critical, high (empty = all)"
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Severities (comma-separated)</label>
+              <input type="text" value={formSeverities} onChange={e => setFormSeverities(e.target.value)} placeholder="critical, high (empty = all)" className={inputClass} />
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Starts at</label>
-              <input
-                type="datetime-local"
-                value={formStartsAt}
-                onChange={e => setFormStartsAt(e.target.value)}
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Starts at</label>
+              <input type="datetime-local" value={formStartsAt} onChange={e => setFormStartsAt(e.target.value)} className={inputClass} />
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Ends at</label>
-              <input
-                type="datetime-local"
-                value={formEndsAt}
-                onChange={e => setFormEndsAt(e.target.value)}
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Ends at</label>
+              <input type="datetime-local" value={formEndsAt} onChange={e => setFormEndsAt(e.target.value)} className={inputClass} />
             </div>
             <div className="col-span-2">
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Reason</label>
-              <input
-                type="text"
-                value={formReason}
-                onChange={e => setFormReason(e.target.value)}
-                placeholder="Optional reason for this silence"
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Reason</label>
+              <input type="text" value={formReason} onChange={e => setFormReason(e.target.value)} placeholder="Optional reason for this silence" className={inputClass} />
             </div>
             <div className="col-span-2">
               <button
@@ -176,60 +191,108 @@ export function SilenceList() {
         )}
         <div className="divide-y divide-solace-border/50">
           {windows.map(window => (
-            <div
-              key={window.id}
-              className="flex items-center gap-3 px-5 py-3 hover:bg-solace-surface/30 transition-colors"
-            >
-              {/* Status dot */}
-              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                isActive(window) ? 'bg-emerald-500' : 'bg-solace-muted/50'
-              }`} />
-
-              {/* Name + matchers */}
-              <div className="flex-1 min-w-0">
-                <div className="text-sm text-solace-bright font-medium truncate">{window.name}</div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  {window.matchers.service && window.matchers.service.length > 0 && (
-                    <span className="text-[10px] font-mono text-solace-muted">
-                      services: {window.matchers.service.join(', ')}
-                    </span>
-                  )}
-                  {window.matchers.severity && window.matchers.severity.length > 0 && (
-                    <span className="text-[10px] font-mono text-solace-muted">
-                      severities: {window.matchers.severity.join(', ')}
-                    </span>
-                  )}
-                  {(!window.matchers.service || window.matchers.service.length === 0) &&
-                   (!window.matchers.severity || window.matchers.severity.length === 0) && (
-                    <span className="text-[10px] font-mono text-solace-muted">all alerts</span>
-                  )}
+            <div key={window.id}>
+              {editingId === window.id ? (
+                /* Inline edit form */
+                <div className="bg-solace-surface/30 p-4 border-b border-solace-border">
+                  <div className="grid grid-cols-2 gap-3 max-w-2xl">
+                    <div className="col-span-2">
+                      <label className={labelClass}>Name</label>
+                      <input type="text" value={editName} onChange={e => setEditName(e.target.value)} className={inputClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Services</label>
+                      <input type="text" value={editServices} onChange={e => setEditServices(e.target.value)} placeholder="api, web (empty = all)" className={inputClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Severities</label>
+                      <input type="text" value={editSeverities} onChange={e => setEditSeverities(e.target.value)} placeholder="critical, high (empty = all)" className={inputClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Starts at</label>
+                      <input type="datetime-local" value={editStartsAt} onChange={e => setEditStartsAt(e.target.value)} className={inputClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Ends at</label>
+                      <input type="datetime-local" value={editEndsAt} onChange={e => setEditEndsAt(e.target.value)} className={inputClass} />
+                    </div>
+                    <div className="col-span-2">
+                      <label className={labelClass}>Reason</label>
+                      <input type="text" value={editReason} onChange={e => setEditReason(e.target.value)} className={inputClass} />
+                    </div>
+                    <div className="col-span-2 flex items-center gap-2">
+                      <button
+                        onClick={handleUpdate}
+                        disabled={!editName || !editStartsAt || !editEndsAt}
+                        className="px-4 py-1.5 text-xs font-medium rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Save Changes
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        className="px-4 py-1.5 text-xs font-medium text-solace-muted hover:text-solace-text transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                /* Row display */
+                <div className="flex items-center gap-3 px-5 py-3 hover:bg-solace-surface/30 transition-colors">
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    isActive(window) ? 'bg-emerald-500' : 'bg-solace-muted/50'
+                  }`} />
 
-              {/* Time range */}
-              <div className="text-right flex-shrink-0">
-                <div className="text-[10px] font-mono text-solace-muted">
-                  {formatTimestamp(window.starts_at)}
-                </div>
-                <div className="text-[10px] font-mono text-solace-muted">
-                  to {formatTimestamp(window.ends_at)}
-                </div>
-              </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-solace-bright font-medium truncate">{window.name}</div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {window.matchers.service && window.matchers.service.length > 0 && (
+                        <span className="text-[10px] font-mono text-solace-muted">
+                          services: {window.matchers.service.join(', ')}
+                        </span>
+                      )}
+                      {window.matchers.severity && window.matchers.severity.length > 0 && (
+                        <span className="text-[10px] font-mono text-solace-muted">
+                          severities: {window.matchers.severity.join(', ')}
+                        </span>
+                      )}
+                      {(!window.matchers.service || window.matchers.service.length === 0) &&
+                       (!window.matchers.severity || window.matchers.severity.length === 0) && (
+                        <span className="text-[10px] font-mono text-solace-muted">all alerts</span>
+                      )}
+                    </div>
+                  </div>
 
-              {/* Reason */}
-              {window.reason && (
-                <div className="text-xs text-solace-muted truncate max-w-[120px]" title={window.reason}>
-                  {window.reason}
+                  <div className="text-right flex-shrink-0">
+                    <div className="text-[10px] font-mono text-solace-muted">
+                      {formatTimestamp(window.starts_at)}
+                    </div>
+                    <div className="text-[10px] font-mono text-solace-muted">
+                      to {formatTimestamp(window.ends_at)}
+                    </div>
+                  </div>
+
+                  {window.reason && (
+                    <div className="text-xs text-solace-muted truncate max-w-[120px]" title={window.reason}>
+                      {window.reason}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={() => startEdit(window)}
+                    className="flex-shrink-0 px-2 py-1 text-[10px] font-mono text-solace-muted hover:text-solace-text hover:bg-solace-surface/50 rounded transition-colors"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => deleteSilence(window.id)}
+                    className="flex-shrink-0 px-2 py-1 text-[10px] font-mono text-red-400/60 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                  >
+                    Expire
+                  </button>
                 </div>
               )}
-
-              {/* Delete button */}
-              <button
-                onClick={() => deleteSilence(window.id)}
-                className="flex-shrink-0 px-2 py-1 text-[10px] font-mono text-red-400/60 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors"
-              >
-                Expire
-              </button>
             </div>
           ))}
         </div>

@@ -10,18 +10,27 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 export function NotificationChannelList() {
-  const { channels, loading, error, createChannel, deleteChannel, testChannel } = useNotificationChannels();
+  const { channels, loading, error, createChannel, updateChannel, deleteChannel, testChannel } = useNotificationChannels();
   const [showForm, setShowForm] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ id: string; msg: string; ok: boolean } | null>(null);
 
-  // Form state
+  // Create form state
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState<'slack' | 'email'>('slack');
   const [formWebhookUrl, setFormWebhookUrl] = useState('');
   const [formRecipients, setFormRecipients] = useState('');
   const [formSeverities, setFormSeverities] = useState('');
   const [formServices, setFormServices] = useState('');
+
+  // Edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editWebhookUrl, setEditWebhookUrl] = useState('');
+  const [editRecipients, setEditRecipients] = useState('');
+  const [editSeverities, setEditSeverities] = useState('');
+  const [editServices, setEditServices] = useState('');
+  const [editIsActive, setEditIsActive] = useState(true);
 
   const handleCreate = async () => {
     if (!formName) return;
@@ -59,6 +68,43 @@ export function NotificationChannelList() {
     setShowForm(false);
   };
 
+  const startEdit = (ch: NotificationChannel) => {
+    setEditingId(ch.id);
+    setEditName(ch.name);
+    setEditWebhookUrl(ch.channel_type === 'slack' ? (ch.config.webhook_url as string || '') : '');
+    setEditRecipients(ch.channel_type === 'email' ? ((ch.config.recipients as string[])?.join(', ') || '') : '');
+    setEditSeverities(ch.filters.severity?.join(', ') || '');
+    setEditServices(ch.filters.service?.join(', ') || '');
+    setEditIsActive(ch.is_active);
+  };
+
+  const handleUpdate = async (ch: NotificationChannel) => {
+    if (!editingId || !editName) return;
+
+    const config: Record<string, unknown> = {};
+    if (ch.channel_type === 'slack') {
+      config.webhook_url = editWebhookUrl;
+    } else {
+      config.recipients = editRecipients.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    const filters: Record<string, unknown> = {};
+    if (editSeverities.trim()) {
+      filters.severity = editSeverities.split(',').map(s => s.trim()).filter(Boolean);
+    }
+    if (editServices.trim()) {
+      filters.service = editServices.split(',').map(s => s.trim()).filter(Boolean);
+    }
+
+    await updateChannel(editingId, {
+      name: editName,
+      config,
+      filters,
+      is_active: editIsActive,
+    });
+    setEditingId(null);
+  };
+
   const handleTest = async (id: string) => {
     try {
       const result = await testChannel(id);
@@ -68,6 +114,9 @@ export function NotificationChannelList() {
     }
     setTimeout(() => setTestResult(null), 3000);
   };
+
+  const inputClass = "w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50";
+  const labelClass = "block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1";
 
   return (
     <div className="flex flex-col h-full">
@@ -89,22 +138,12 @@ export function NotificationChannelList() {
         <div className="flex-shrink-0 border-b border-solace-border bg-solace-surface/30 p-4">
           <div className="grid grid-cols-2 gap-3 max-w-2xl">
             <div>
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Name</label>
-              <input
-                type="text"
-                value={formName}
-                onChange={e => setFormName(e.target.value)}
-                placeholder="Channel name"
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Name</label>
+              <input type="text" value={formName} onChange={e => setFormName(e.target.value)} placeholder="Channel name" className={inputClass} />
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Type</label>
-              <select
-                value={formType}
-                onChange={e => setFormType(e.target.value as 'slack' | 'email')}
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text focus:outline-none focus:border-emerald-500/50"
-              >
+              <label className={labelClass}>Type</label>
+              <select value={formType} onChange={e => setFormType(e.target.value as 'slack' | 'email')} className={inputClass}>
                 <option value="slack">Slack</option>
                 <option value="email">Email</option>
               </select>
@@ -112,47 +151,23 @@ export function NotificationChannelList() {
 
             {formType === 'slack' ? (
               <div className="col-span-2">
-                <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Webhook URL</label>
-                <input
-                  type="text"
-                  value={formWebhookUrl}
-                  onChange={e => setFormWebhookUrl(e.target.value)}
-                  placeholder="https://hooks.slack.com/services/..."
-                  className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-                />
+                <label className={labelClass}>Webhook URL</label>
+                <input type="text" value={formWebhookUrl} onChange={e => setFormWebhookUrl(e.target.value)} placeholder="https://hooks.slack.com/services/..." className={inputClass} />
               </div>
             ) : (
               <div className="col-span-2">
-                <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Recipients (comma-separated emails)</label>
-                <input
-                  type="text"
-                  value={formRecipients}
-                  onChange={e => setFormRecipients(e.target.value)}
-                  placeholder="team@example.com, oncall@example.com"
-                  className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-                />
+                <label className={labelClass}>Recipients (comma-separated emails)</label>
+                <input type="text" value={formRecipients} onChange={e => setFormRecipients(e.target.value)} placeholder="team@example.com, oncall@example.com" className={inputClass} />
               </div>
             )}
 
             <div>
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Severity filter (comma-separated)</label>
-              <input
-                type="text"
-                value={formSeverities}
-                onChange={e => setFormSeverities(e.target.value)}
-                placeholder="critical, high (empty = all)"
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Severity filter (comma-separated)</label>
+              <input type="text" value={formSeverities} onChange={e => setFormSeverities(e.target.value)} placeholder="critical, high (empty = all)" className={inputClass} />
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wider font-semibold text-solace-muted mb-1">Service filter (comma-separated)</label>
-              <input
-                type="text"
-                value={formServices}
-                onChange={e => setFormServices(e.target.value)}
-                placeholder="api, web (empty = all)"
-                className="w-full px-3 py-1.5 text-sm bg-solace-bg border border-solace-border rounded-md text-solace-text placeholder:text-solace-muted/50 focus:outline-none focus:border-emerald-500/50"
-              />
+              <label className={labelClass}>Service filter (comma-separated)</label>
+              <input type="text" value={formServices} onChange={e => setFormServices(e.target.value)} placeholder="api, web (empty = all)" className={inputClass} />
             </div>
 
             <div className="col-span-2">
@@ -188,15 +203,78 @@ export function NotificationChannelList() {
         )}
         <div className="divide-y divide-solace-border/50">
           {channels.map(ch => (
-            <ChannelRow
-              key={ch.id}
-              channel={ch}
-              isExpanded={selectedChannel === ch.id}
-              onToggle={() => setSelectedChannel(selectedChannel === ch.id ? null : ch.id)}
-              onDelete={() => deleteChannel(ch.id)}
-              onTest={() => handleTest(ch.id)}
-              testResult={testResult?.id === ch.id ? testResult : null}
-            />
+            <div key={ch.id}>
+              {editingId === ch.id ? (
+                /* Inline edit form */
+                <div className="bg-solace-surface/30 p-4 border-b border-solace-border">
+                  <div className="grid grid-cols-2 gap-3 max-w-2xl">
+                    <div>
+                      <label className={labelClass}>Name</label>
+                      <input type="text" value={editName} onChange={e => setEditName(e.target.value)} className={inputClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Active</label>
+                      <label className="flex items-center gap-2 mt-1">
+                        <input
+                          type="checkbox"
+                          checked={editIsActive}
+                          onChange={e => setEditIsActive(e.target.checked)}
+                          className="rounded border-solace-border"
+                        />
+                        <span className="text-sm text-solace-text">{editIsActive ? 'Enabled' : 'Disabled'}</span>
+                      </label>
+                    </div>
+
+                    {ch.channel_type === 'slack' ? (
+                      <div className="col-span-2">
+                        <label className={labelClass}>Webhook URL</label>
+                        <input type="text" value={editWebhookUrl} onChange={e => setEditWebhookUrl(e.target.value)} className={inputClass} />
+                      </div>
+                    ) : (
+                      <div className="col-span-2">
+                        <label className={labelClass}>Recipients (comma-separated)</label>
+                        <input type="text" value={editRecipients} onChange={e => setEditRecipients(e.target.value)} className={inputClass} />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className={labelClass}>Severity filter</label>
+                      <input type="text" value={editSeverities} onChange={e => setEditSeverities(e.target.value)} placeholder="critical, high (empty = all)" className={inputClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Service filter</label>
+                      <input type="text" value={editServices} onChange={e => setEditServices(e.target.value)} placeholder="api, web (empty = all)" className={inputClass} />
+                    </div>
+
+                    <div className="col-span-2 flex items-center gap-2">
+                      <button
+                        onClick={() => handleUpdate(ch)}
+                        disabled={!editName}
+                        className="px-4 py-1.5 text-xs font-medium rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Save Changes
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        className="px-4 py-1.5 text-xs font-medium text-solace-muted hover:text-solace-text transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <ChannelRow
+                  channel={ch}
+                  isExpanded={selectedChannel === ch.id}
+                  onToggle={() => setSelectedChannel(selectedChannel === ch.id ? null : ch.id)}
+                  onEdit={() => startEdit(ch)}
+                  onDelete={() => deleteChannel(ch.id)}
+                  onTest={() => handleTest(ch.id)}
+                  testResult={testResult?.id === ch.id ? testResult : null}
+                />
+              )}
+            </div>
           ))}
         </div>
       </div>
@@ -208,6 +286,7 @@ function ChannelRow({
   channel,
   isExpanded,
   onToggle,
+  onEdit,
   onDelete,
   onTest,
   testResult,
@@ -215,6 +294,7 @@ function ChannelRow({
   channel: NotificationChannel;
   isExpanded: boolean;
   onToggle: () => void;
+  onEdit: () => void;
   onDelete: () => void;
   onTest: () => void;
   testResult: { msg: string; ok: boolean } | null;
@@ -275,6 +355,12 @@ function ChannelRow({
           className="flex-shrink-0 px-2 py-1 text-[10px] font-mono text-solace-muted hover:text-solace-text hover:bg-solace-surface/50 rounded transition-colors"
         >
           Test
+        </button>
+        <button
+          onClick={e => { e.stopPropagation(); onEdit(); }}
+          className="flex-shrink-0 px-2 py-1 text-[10px] font-mono text-solace-muted hover:text-solace-text hover:bg-solace-surface/50 rounded transition-colors"
+        >
+          Edit
         </button>
         <button
           onClick={e => { e.stopPropagation(); onDelete(); }}

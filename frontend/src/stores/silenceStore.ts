@@ -25,6 +25,7 @@ interface SilenceState {
     created_by?: string;
     reason?: string;
   }) => Promise<void>;
+  updateSilence: (id: string, data: Record<string, unknown>) => Promise<void>;
   deleteSilence: (id: string) => Promise<void>;
 }
 
@@ -69,6 +70,15 @@ export const useSilenceStore = create<SilenceState>((set, get) => ({
       await get().fetchSilences();
     } catch (err) {
       set({ error: err instanceof Error ? err.message : 'Failed to create silence' });
+    }
+  },
+
+  updateSilence: async (id, data) => {
+    try {
+      await api.silences.update(id, data);
+      await get().fetchSilences();
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : 'Failed to update silence' });
     }
   },
 

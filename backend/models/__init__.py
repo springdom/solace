@@ -25,6 +25,7 @@ class AlertStatus(enum.StrEnum):
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
     SUPPRESSED = "suppressed"
+    ARCHIVED = "archived"
 
 
 class Severity(enum.StrEnum):
@@ -54,10 +55,12 @@ class Alert(Base):
     source: Mapped[str] = mapped_column(String(100), nullable=False)
     source_instance: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[AlertStatus] = mapped_column(
-        Enum(AlertStatus), nullable=False, default=AlertStatus.FIRING
+        Enum(AlertStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False, default=AlertStatus.FIRING,
     )
     severity: Mapped[Severity] = mapped_column(
-        Enum(Severity), nullable=False, default=Severity.WARNING
+        Enum(Severity, values_callable=lambda x: [e.value for e in x]),
+        nullable=False, default=Severity.WARNING,
     )
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -80,6 +83,9 @@ class Alert(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duplicate_count: Mapped[int] = mapped_column(Integer, default=1)
     generator_url: Mapped[str | None] = mapped_column(Text)
+    runbook_url: Mapped[str | None] = mapped_column(Text)
+    ticket_url: Mapped[str | None] = mapped_column(Text)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # ── Relationships ────────────────────────────────────
     incident_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -88,6 +94,10 @@ class Alert(Base):
     incident: Mapped["Incident | None"] = relationship(back_populates="alerts")
     notes: Mapped[list["AlertNote"]] = relationship(
         back_populates="alert", order_by="AlertNote.created_at.desc()",
+        cascade="all, delete-orphan",
+    )
+    occurrences: Mapped[list["AlertOccurrence"]] = relationship(
+        back_populates="alert", order_by="AlertOccurrence.received_at.desc()",
         cascade="all, delete-orphan",
     )
 
@@ -149,6 +159,34 @@ class AlertNote(Base):
         return f"<AlertNote {str(self.id)[:8]} on alert {str(self.alert_id)[:8]}>"
 
 
+# ─── Alert Occurrence (Duplicate Timeline) ────────────────
+
+
+class AlertOccurrence(Base):
+    __tablename__ = "alert_occurrences"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    alert_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    # ── Relationships ────────────────────────────────────
+    alert: Mapped["Alert"] = relationship(back_populates="occurrences")
+
+    __table_args__ = (
+        Index("idx_alert_occurrences_alert_id", "alert_id"),
+        Index("idx_alert_occurrences_received_at", "received_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AlertOccurrence {str(self.alert_id)[:8]} at {self.received_at}>"
+
+
 # ─── Incident ────────────────────────────────────────────
 
 
@@ -160,12 +198,15 @@ class Incident(Base):
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[IncidentStatus] = mapped_column(
-        Enum(IncidentStatus), nullable=False, default=IncidentStatus.OPEN
+        Enum(IncidentStatus, values_callable=lambda x: [e.value for e in x]),
+        nullable=False, default=IncidentStatus.OPEN,
     )
     severity: Mapped[Severity] = mapped_column(
-        Enum(Severity), nullable=False, default=Severity.WARNING
+        Enum(Severity, values_callable=lambda x: [e.value for e in x]),
+        nullable=False, default=Severity.WARNING,
     )
     summary: Mapped[str | None] = mapped_column(Text)
+    phase: Mapped[str | None] = mapped_column(String(50))
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -85,6 +85,22 @@ function AlertCard({ alert, onSelect }: { alert: import('../lib/types').Incident
   );
 }
 
+const PHASE_COLORS: Record<string, string> = {
+  detection: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  investigation: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+  mitigation: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+  resolution: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+};
+
+function PhaseBadge({ phase }: { phase: string }) {
+  const colors = PHASE_COLORS[phase] || 'bg-solace-border text-solace-muted border-solace-border';
+  return (
+    <span className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded border ${colors}`}>
+      {phase}
+    </span>
+  );
+}
+
 export function IncidentDetail({ incident, onAcknowledge, onResolve, onClose, onAlertSelect }: IncidentDetailProps) {
   const [detail, setDetail] = useState<IncidentDetailType | null>(null);
   const isOpen = incident.status === 'open';
@@ -105,6 +121,7 @@ export function IncidentDetail({ incident, onAcknowledge, onResolve, onClose, on
           <div className="flex items-center gap-2 mb-2">
             <SeverityBadge severity={incident.severity} pulse={isOpen} />
             <IncidentStatusBadge status={incident.status} />
+            {incident.phase && <PhaseBadge phase={incident.phase} />}
           </div>
           <h2 className="font-mono text-base font-semibold text-solace-bright break-words">
             {incident.title}

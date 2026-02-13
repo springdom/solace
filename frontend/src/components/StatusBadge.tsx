@@ -5,6 +5,7 @@ const STATUS_CONFIG: Record<AlertStatus, { bg: string; text: string; label: stri
   acknowledged: { bg: 'bg-amber-500/10 border border-amber-500/20', text: 'text-amber-400', label: 'Acked' },
   resolved:     { bg: 'bg-emerald-500/10 border border-emerald-500/20', text: 'text-emerald-400', label: 'Resolved' },
   suppressed:   { bg: 'bg-gray-500/10 border border-gray-500/20', text: 'text-gray-400', label: 'Suppressed' },
+  archived:     { bg: 'bg-slate-500/10 border border-slate-500/20', text: 'text-slate-400', label: 'Archived' },
 };
 
 export function StatusBadge({ status }: { status: AlertStatus }) {
