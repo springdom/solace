@@ -1,8 +1,7 @@
 """Notification dispatcher for incident events.
 
-Sends notifications to configured channels (Slack, email) when
-incidents are created or escalated. Includes rate limiting to
-prevent notification spam.
+Sends notifications to configured channels (Slack, Teams, Email, Webhook, PagerDuty)
+when incidents are created or escalated. Includes rate limiting to prevent notification spam.
 """
 
 import logging
@@ -29,7 +28,7 @@ logger = logging.getLogger(__name__)
 # In-memory rate limit cache: (channel_id, incident_id) -> last_sent_at
 _rate_limit_cache: dict[tuple[str, str], datetime] = {}
 
-# Severity to color mapping for Slack messages
+# Severity to color mapping for Slack / Teams messages
 SEVERITY_COLORS = {
     "critical": "#ef4444",
     "high": "#f97316",
@@ -42,6 +41,15 @@ EVENT_LABELS = {
     "incident_created": "New Incident",
     "severity_changed": "Severity Escalated",
     "incident_resolved": "Incident Resolved",
+}
+
+# PagerDuty severity mapping (Solace → PagerDuty)
+PD_SEVERITY_MAP = {
+    "critical": "critical",
+    "high": "error",
+    "warning": "warning",
+    "low": "info",
+    "info": "info",
 }
 
 
@@ -79,6 +87,11 @@ def check_rate_limit(channel_id: str, incident_id: str) -> bool:
 
     _rate_limit_cache[key] = now
     return True
+
+
+# ──────────────────────────────────────────────────────────────
+# Slack
+# ──────────────────────────────────────────────────────────────
 
 
 def format_slack_message(incident: Incident, event_type: str) -> dict:
@@ -128,6 +141,262 @@ def format_slack_message(incident: Incident, event_type: str) -> dict:
             }
         ]
     }
+
+
+async def _send_slack(channel: NotificationChannel, incident: Incident, event_type: str) -> None:
+    """Send a Slack webhook notification."""
+    webhook_url = channel.config.get("webhook_url")
+    if not webhook_url:
+        raise ValueError("Slack channel missing webhook_url in config")
+
+    message = format_slack_message(incident, event_type)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(webhook_url, json=message)
+        response.raise_for_status()
+
+
+# ──────────────────────────────────────────────────────────────
+# Microsoft Teams (Incoming Webhook via Adaptive Cards)
+# ──────────────────────────────────────────────────────────────
+
+
+def format_teams_message(incident: Incident, event_type: str) -> dict:
+    """Build a Microsoft Teams Adaptive Card message for an incident."""
+    settings = get_settings()
+    severity = incident.severity.value
+    event_label = EVENT_LABELS.get(event_type, event_type)
+    alert_count = len(incident.alerts) if incident.alerts else 0
+    dashboard_url = f"{settings.solace_dashboard_url}"
+
+    services = {a.service for a in incident.alerts if a.service} if incident.alerts else set()
+    service_text = ", ".join(sorted(services)) if services else "unknown"
+
+    # Teams Workflows / Power Automate webhook format (Adaptive Card)
+    return {
+        "type": "message",
+        "attachments": [
+            {
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "contentUrl": None,
+                "content": {
+                    "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                    "type": "AdaptiveCard",
+                    "version": "1.4",
+                    "body": [
+                        {
+                            "type": "Container",
+                            "style": "emphasis",
+                            "items": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": f"🔔 {event_label}",
+                                    "weight": "Bolder",
+                                    "size": "Medium",
+                                },
+                            ],
+                        },
+                        {
+                            "type": "Container",
+                            "items": [
+                                {
+                                    "type": "TextBlock",
+                                    "text": incident.title,
+                                    "weight": "Bolder",
+                                    "size": "Large",
+                                    "wrap": True,
+                                },
+                                {
+                                    "type": "FactSet",
+                                    "facts": [
+                                        {"title": "Severity", "value": severity.upper()},
+                                        {"title": "Status", "value": incident.status.value.upper()},
+                                        {"title": "Alerts", "value": str(alert_count)},
+                                        {"title": "Service", "value": service_text},
+                                    ],
+                                },
+                            ],
+                        },
+                    ],
+                    "actions": [
+                        {
+                            "type": "Action.OpenUrl",
+                            "title": "View in Solace",
+                            "url": dashboard_url,
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+
+async def _send_teams(channel: NotificationChannel, incident: Incident, event_type: str) -> None:
+    """Send a Microsoft Teams webhook notification."""
+    webhook_url = channel.config.get("webhook_url")
+    if not webhook_url:
+        raise ValueError("Teams channel missing webhook_url in config")
+
+    message = format_teams_message(incident, event_type)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(webhook_url, json=message)
+        response.raise_for_status()
+
+
+# ──────────────────────────────────────────────────────────────
+# Generic Outbound Webhook
+# ──────────────────────────────────────────────────────────────
+
+
+def format_webhook_payload(incident: Incident, event_type: str) -> dict:
+    """Build a generic JSON payload for outbound webhooks."""
+    settings = get_settings()
+    alert_count = len(incident.alerts) if incident.alerts else 0
+    services = {a.service for a in incident.alerts if a.service} if incident.alerts else set()
+
+    alerts_data = []
+    if incident.alerts:
+        for a in incident.alerts[:20]:
+            alerts_data.append({
+                "id": str(a.id),
+                "name": a.name,
+                "status": a.status.value,
+                "severity": a.severity.value,
+                "service": a.service,
+                "host": a.host,
+                "description": a.description,
+                "duplicate_count": a.duplicate_count,
+                "starts_at": a.starts_at.isoformat() if a.starts_at else None,
+            })
+
+    return {
+        "event_type": event_type,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "source": "solace",
+        "dashboard_url": settings.solace_dashboard_url,
+        "incident": {
+            "id": str(incident.id),
+            "title": incident.title,
+            "status": incident.status.value,
+            "severity": incident.severity.value,
+            "started_at": incident.started_at.isoformat() if incident.started_at else None,
+            "acknowledged_at": (
+                incident.acknowledged_at.isoformat()
+                if incident.acknowledged_at
+                else None
+            ),
+            "resolved_at": incident.resolved_at.isoformat() if incident.resolved_at else None,
+            "alert_count": alert_count,
+            "services": sorted(services),
+            "alerts": alerts_data,
+        },
+    }
+
+
+async def _send_webhook(channel: NotificationChannel, incident: Incident, event_type: str) -> None:
+    """Send a generic outbound webhook notification."""
+    webhook_url = channel.config.get("webhook_url")
+    if not webhook_url:
+        raise ValueError("Webhook channel missing webhook_url in config")
+
+    payload = format_webhook_payload(incident, event_type)
+
+    headers = {"Content-Type": "application/json", "User-Agent": "Solace/1.0"}
+
+    # Support optional custom headers
+    custom_headers = channel.config.get("headers")
+    if custom_headers and isinstance(custom_headers, dict):
+        headers.update(custom_headers)
+
+    # Support optional secret for HMAC or bearer auth
+    secret = channel.config.get("secret")
+    if secret:
+        headers["X-Solace-Secret"] = secret
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(webhook_url, json=payload, headers=headers)
+        response.raise_for_status()
+
+
+# ──────────────────────────────────────────────────────────────
+# PagerDuty (Events API v2)
+# ──────────────────────────────────────────────────────────────
+
+
+def format_pagerduty_event(
+    incident: Incident, event_type: str, routing_key: str
+) -> dict:
+    """Build a PagerDuty Events API v2 payload."""
+    settings = get_settings()
+    severity = incident.severity.value
+    pd_severity = PD_SEVERITY_MAP.get(severity, "info")
+    alert_count = len(incident.alerts) if incident.alerts else 0
+    services = {a.service for a in incident.alerts if a.service} if incident.alerts else set()
+    service_text = ", ".join(sorted(services)) if services else "unknown"
+
+    # Map Solace event types to PagerDuty actions
+    if event_type == "incident_resolved":
+        action = "resolve"
+    elif event_type in ("incident_created", "severity_changed"):
+        action = "trigger"
+    else:
+        action = "trigger"
+
+    payload = {
+        "routing_key": routing_key,
+        "event_action": action,
+        "dedup_key": f"solace-incident-{incident.id}",
+    }
+
+    if action == "trigger":
+        payload["payload"] = {
+            "summary": f"[{severity.upper()}] {incident.title} ({alert_count} alerts)",
+            "source": service_text,
+            "severity": pd_severity,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "component": service_text,
+            "group": service_text,
+            "class": event_type,
+            "custom_details": {
+                "incident_id": str(incident.id),
+                "status": incident.status.value,
+                "alert_count": alert_count,
+                "services": sorted(services),
+                "dashboard_url": settings.solace_dashboard_url,
+            },
+        }
+        payload["links"] = [
+            {
+                "href": settings.solace_dashboard_url,
+                "text": "View in Solace",
+            }
+        ]
+
+    return payload
+
+
+async def _send_pagerduty(
+    channel: NotificationChannel, incident: Incident, event_type: str
+) -> None:
+    """Send a PagerDuty Events API v2 notification."""
+    routing_key = channel.config.get("routing_key")
+    if not routing_key:
+        raise ValueError("PagerDuty channel missing routing_key in config")
+
+    payload = format_pagerduty_event(incident, event_type, routing_key)
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            "https://events.pagerduty.com/v2/enqueue",
+            json=payload,
+        )
+        response.raise_for_status()
+
+
+# ──────────────────────────────────────────────────────────────
+# Email
+# ──────────────────────────────────────────────────────────────
 
 
 def format_email_html(incident: Incident, event_type: str) -> tuple[str, str]:
@@ -199,19 +468,6 @@ def format_email_html(incident: Incident, event_type: str) -> tuple[str, str]:
     return subject, html
 
 
-async def _send_slack(channel: NotificationChannel, incident: Incident, event_type: str) -> None:
-    """Send a Slack webhook notification."""
-    webhook_url = channel.config.get("webhook_url")
-    if not webhook_url:
-        raise ValueError("Slack channel missing webhook_url in config")
-
-    message = format_slack_message(incident, event_type)
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.post(webhook_url, json=message)
-        response.raise_for_status()
-
-
 async def _send_email(channel: NotificationChannel, incident: Incident, event_type: str) -> None:
     """Send an email notification via SMTP."""
     settings = get_settings()
@@ -244,6 +500,20 @@ async def _send_email(channel: NotificationChannel, incident: Incident, event_ty
         server.sendmail(from_address, recipients, msg.as_string())
     finally:
         server.quit()
+
+
+# ──────────────────────────────────────────────────────────────
+# Dispatcher
+# ──────────────────────────────────────────────────────────────
+
+# Map channel types to sender functions
+_SENDERS = {
+    ChannelType.SLACK: _send_slack,
+    ChannelType.EMAIL: _send_email,
+    ChannelType.TEAMS: _send_teams,
+    ChannelType.WEBHOOK: _send_webhook,
+    ChannelType.PAGERDUTY: _send_pagerduty,
+}
 
 
 async def dispatch_notifications(
@@ -287,10 +557,11 @@ async def dispatch_notifications(
         db.add(log)
 
         try:
-            if channel.channel_type == ChannelType.SLACK:
-                await _send_slack(channel, incident, event_type)
-            elif channel.channel_type == ChannelType.EMAIL:
-                await _send_email(channel, incident, event_type)
+            sender = _SENDERS.get(channel.channel_type)
+            if sender:
+                await sender(channel, incident, event_type)
+            else:
+                raise ValueError(f"Unknown channel type: {channel.channel_type}")
 
             log.status = NotificationStatus.SENT
             log.sent_at = datetime.now(UTC)

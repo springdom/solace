@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
 from backend.models import (
@@ -64,9 +65,10 @@ async def create_channel(
     try:
         channel_type = ChannelType(data.channel_type)
     except ValueError:
+        valid = ", ".join(f"'{t.value}'" for t in ChannelType)
         raise HTTPException(
             400,
-            f"Invalid channel_type: {data.channel_type}. Must be 'slack' or 'email'",
+            f"Invalid channel_type: {data.channel_type}. Must be one of: {valid}",
         )
 
     # Validate config based on type
@@ -74,6 +76,12 @@ async def create_channel(
         raise HTTPException(400, "Slack channels require 'webhook_url' in config")
     if channel_type == ChannelType.EMAIL and not data.config.get("recipients"):
         raise HTTPException(400, "Email channels require 'recipients' list in config")
+    if channel_type == ChannelType.TEAMS and not data.config.get("webhook_url"):
+        raise HTTPException(400, "Teams channels require 'webhook_url' in config")
+    if channel_type == ChannelType.WEBHOOK and not data.config.get("webhook_url"):
+        raise HTTPException(400, "Webhook channels require 'webhook_url' in config")
+    if channel_type == ChannelType.PAGERDUTY and not data.config.get("routing_key"):
+        raise HTTPException(400, "PagerDuty channels require 'routing_key' in config")
 
     channel = NotificationChannel(
         name=data.name,
@@ -153,25 +161,25 @@ async def test_channel(
     if not channel:
         raise HTTPException(404, "Channel not found")
 
-    # Find a recent incident to use as test data, or create a mock
+    # Find a recent incident to use as test data, eagerly load alerts
     stmt = (
         select(Incident)
+        .options(selectinload(Incident.alerts))
         .order_by(Incident.created_at.desc())
         .limit(1)
     )
     result = await db.execute(stmt)
-    incident = result.scalar_one_or_none()
+    incident = result.unique().scalar_one_or_none()
 
     if not incident:
         return {"status": "error", "message": "No incidents available for test notification"}
 
     try:
-        if channel.channel_type == ChannelType.SLACK:
-            from backend.core.notifications import _send_slack
-            await _send_slack(channel, incident, "incident_created")
-        elif channel.channel_type == ChannelType.EMAIL:
-            from backend.core.notifications import _send_email
-            await _send_email(channel, incident, "incident_created")
+        from backend.core.notifications import _SENDERS
+        sender = _SENDERS.get(channel.channel_type)
+        if not sender:
+            return {"status": "error", "message": f"Unknown channel type: {channel.channel_type}"}
+        await sender(channel, incident, "incident_created")
         return {"status": "sent"}
     except Exception as e:
         return {"status": "error", "message": str(e)}

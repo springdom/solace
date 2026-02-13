@@ -6,7 +6,10 @@ from backend.core.notifications import (
     _rate_limit_cache,
     check_rate_limit,
     format_email_html,
+    format_pagerduty_event,
     format_slack_message,
+    format_teams_message,
+    format_webhook_payload,
     matches_filters,
 )
 from backend.models import (
@@ -204,3 +207,141 @@ class TestEmailFormatting:
         _, html = format_email_html(incident, "incident_created")
         assert "Test Alert" in html
         assert "api" in html
+
+
+# ─── Teams Message Formatting ──────────────────────────
+
+
+class TestTeamsFormatting:
+    def test_message_is_adaptive_card(self):
+        incident = _make_incident()
+        msg = format_teams_message(incident, "incident_created")
+        assert msg["type"] == "message"
+        card = msg["attachments"][0]["content"]
+        assert card["type"] == "AdaptiveCard"
+        assert card["version"] == "1.4"
+
+    def test_message_contains_incident_title(self):
+        incident = _make_incident()
+        msg = format_teams_message(incident, "incident_created")
+        body = msg["attachments"][0]["content"]["body"]
+        title_block = body[1]["items"][0]
+        assert "Test Incident" in title_block["text"]
+
+    def test_message_contains_event_label(self):
+        incident = _make_incident()
+        msg = format_teams_message(incident, "incident_created")
+        body = msg["attachments"][0]["content"]["body"]
+        header = body[0]["items"][0]["text"]
+        assert "New Incident" in header
+
+    def test_message_has_facts(self):
+        alert = _make_alert(service="api")
+        incident = _make_incident(alerts=[alert])
+        msg = format_teams_message(incident, "incident_created")
+        facts = msg["attachments"][0]["content"]["body"][1]["items"][1]["facts"]
+        fact_titles = [f["title"] for f in facts]
+        assert "Severity" in fact_titles
+        assert "Status" in fact_titles
+        assert "Alerts" in fact_titles
+        assert "Service" in fact_titles
+
+    def test_message_has_action_button(self):
+        incident = _make_incident()
+        msg = format_teams_message(incident, "incident_created")
+        actions = msg["attachments"][0]["content"]["actions"]
+        assert len(actions) == 1
+        assert actions[0]["type"] == "Action.OpenUrl"
+        assert actions[0]["title"] == "View in Solace"
+
+
+# ─── Webhook Payload Formatting ─────────────────────────
+
+
+class TestWebhookFormatting:
+    def test_payload_has_required_fields(self):
+        incident = _make_incident()
+        payload = format_webhook_payload(incident, "incident_created")
+        assert payload["event_type"] == "incident_created"
+        assert payload["source"] == "solace"
+        assert "incident" in payload
+        assert "timestamp" in payload
+
+    def test_payload_incident_fields(self):
+        alert = _make_alert(service="api")
+        incident = _make_incident(alerts=[alert])
+        payload = format_webhook_payload(incident, "incident_created")
+        inc = payload["incident"]
+        assert inc["title"] == "Test Incident"
+        assert inc["severity"] == "critical"
+        assert inc["status"] == "open"
+        assert inc["alert_count"] == 1
+        assert "api" in inc["services"]
+
+    def test_payload_includes_alert_details(self):
+        alert = _make_alert(service="api")
+        alert.description = "High CPU"
+        alert.duplicate_count = 3
+        alert.starts_at = datetime.now(UTC)
+        incident = _make_incident(alerts=[alert])
+        payload = format_webhook_payload(incident, "incident_created")
+        alerts = payload["incident"]["alerts"]
+        assert len(alerts) == 1
+        assert alerts[0]["name"] == "Test Alert"
+        assert alerts[0]["service"] == "api"
+
+    def test_resolved_event(self):
+        incident = _make_incident(status=IncidentStatus.RESOLVED)
+        incident.resolved_at = datetime.now(UTC)
+        payload = format_webhook_payload(incident, "incident_resolved")
+        assert payload["event_type"] == "incident_resolved"
+
+
+# ─── PagerDuty Event Formatting ─────────────────────────
+
+
+class TestPagerDutyFormatting:
+    def test_trigger_event(self):
+        alert = _make_alert(service="api")
+        incident = _make_incident(alerts=[alert])
+        event = format_pagerduty_event(incident, "incident_created", "test-key")
+        assert event["routing_key"] == "test-key"
+        assert event["event_action"] == "trigger"
+        assert f"solace-incident-{incident.id}" == event["dedup_key"]
+        assert "payload" in event
+        assert event["payload"]["severity"] == "critical"
+
+    def test_resolve_event(self):
+        incident = _make_incident()
+        event = format_pagerduty_event(incident, "incident_resolved", "test-key")
+        assert event["event_action"] == "resolve"
+        assert "payload" not in event  # resolve events don't need payload
+
+    def test_severity_mapping(self):
+        for solace_sev, pd_sev in [
+            (Severity.CRITICAL, "critical"),
+            (Severity.HIGH, "error"),
+            (Severity.WARNING, "warning"),
+            (Severity.LOW, "info"),
+            (Severity.INFO, "info"),
+        ]:
+            incident = _make_incident(severity=solace_sev)
+            event = format_pagerduty_event(
+                incident, "incident_created", "test-key"
+            )
+            assert event["payload"]["severity"] == pd_sev
+
+    def test_trigger_has_links(self):
+        incident = _make_incident()
+        event = format_pagerduty_event(incident, "incident_created", "test-key")
+        assert "links" in event
+        assert len(event["links"]) == 1
+        assert "View in Solace" in event["links"][0]["text"]
+
+    def test_trigger_has_custom_details(self):
+        alert = _make_alert(service="api")
+        incident = _make_incident(alerts=[alert])
+        event = format_pagerduty_event(incident, "incident_created", "test-key")
+        details = event["payload"]["custom_details"]
+        assert details["alert_count"] == 1
+        assert "api" in details["services"]

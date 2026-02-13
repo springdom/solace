@@ -126,7 +126,7 @@ export interface SilenceWindowListResponse {
   page_size: number;
 }
 
-export type ChannelType = 'slack' | 'email';
+export type ChannelType = 'slack' | 'email' | 'teams' | 'webhook' | 'pagerduty';
 export type NotificationStatus = 'pending' | 'sent' | 'failed';
 
 export interface NotificationChannel {

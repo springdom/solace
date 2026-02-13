@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { NotificationChannel } from '../lib/types';
+import type { ChannelType, NotificationChannel } from '../lib/types';
 import { useNotificationChannels, useNotificationLogs } from '../hooks/useNotificationChannels';
 import { formatTimestamp } from '../lib/time';
 
@@ -9,6 +9,40 @@ const STATUS_DOT: Record<string, string> = {
   pending: 'bg-yellow-500',
 };
 
+const CHANNEL_BADGE: Record<string, { bg: string; text: string }> = {
+  slack: { bg: 'bg-purple-500/10', text: 'text-purple-400' },
+  email: { bg: 'bg-blue-500/10', text: 'text-blue-400' },
+  teams: { bg: 'bg-indigo-500/10', text: 'text-indigo-400' },
+  webhook: { bg: 'bg-amber-500/10', text: 'text-amber-400' },
+  pagerduty: { bg: 'bg-emerald-500/10', text: 'text-emerald-400' },
+};
+
+const CHANNEL_TYPES: { value: ChannelType; label: string }[] = [
+  { value: 'slack', label: 'Slack' },
+  { value: 'teams', label: 'Microsoft Teams' },
+  { value: 'email', label: 'Email' },
+  { value: 'webhook', label: 'Webhook (Outbound)' },
+  { value: 'pagerduty', label: 'PagerDuty' },
+];
+
+/** Returns which config fields each channel type needs */
+function getConfigFields(type: ChannelType) {
+  switch (type) {
+    case 'slack':
+      return { primary: 'webhook_url', label: 'Webhook URL', placeholder: 'https://hooks.slack.com/services/...' };
+    case 'teams':
+      return { primary: 'webhook_url', label: 'Webhook URL', placeholder: 'https://outlook.office.com/webhook/... or Power Automate URL' };
+    case 'webhook':
+      return { primary: 'webhook_url', label: 'Endpoint URL', placeholder: 'https://your-service.com/webhooks/solace' };
+    case 'pagerduty':
+      return { primary: 'routing_key', label: 'Integration / Routing Key', placeholder: '32-character PagerDuty Events API v2 key' };
+    case 'email':
+      return { primary: 'recipients', label: 'Recipients (comma-separated)', placeholder: 'team@example.com, oncall@example.com' };
+    default:
+      return { primary: 'webhook_url', label: 'URL', placeholder: '' };
+  }
+}
+
 export function NotificationChannelList() {
   const { channels, loading, error, createChannel, updateChannel, deleteChannel, testChannel } = useNotificationChannels();
   const [showForm, setShowForm] = useState(false);
@@ -17,31 +51,37 @@ export function NotificationChannelList() {
 
   // Create form state
   const [formName, setFormName] = useState('');
-  const [formType, setFormType] = useState<'slack' | 'email'>('slack');
-  const [formWebhookUrl, setFormWebhookUrl] = useState('');
-  const [formRecipients, setFormRecipients] = useState('');
+  const [formType, setFormType] = useState<ChannelType>('slack');
+  const [formPrimaryValue, setFormPrimaryValue] = useState('');
+  const [formSecret, setFormSecret] = useState('');
   const [formSeverities, setFormSeverities] = useState('');
   const [formServices, setFormServices] = useState('');
 
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
-  const [editWebhookUrl, setEditWebhookUrl] = useState('');
-  const [editRecipients, setEditRecipients] = useState('');
+  const [editPrimaryValue, setEditPrimaryValue] = useState('');
+  const [editSecret, setEditSecret] = useState('');
   const [editSeverities, setEditSeverities] = useState('');
   const [editServices, setEditServices] = useState('');
   const [editIsActive, setEditIsActive] = useState(true);
 
+  const configFields = getConfigFields(formType);
+
   const handleCreate = async () => {
-    if (!formName) return;
+    if (!formName || !formPrimaryValue) return;
 
     const config: Record<string, unknown> = {};
-    if (formType === 'slack') {
-      if (!formWebhookUrl) return;
-      config.webhook_url = formWebhookUrl;
+    if (formType === 'email') {
+      config.recipients = formPrimaryValue.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (formType === 'pagerduty') {
+      config.routing_key = formPrimaryValue;
     } else {
-      if (!formRecipients) return;
-      config.recipients = formRecipients.split(',').map(s => s.trim()).filter(Boolean);
+      config.webhook_url = formPrimaryValue;
+    }
+    // Webhook-specific: optional secret and custom headers
+    if (formType === 'webhook' && formSecret.trim()) {
+      config.secret = formSecret.trim();
     }
 
     const filters: Record<string, unknown> = {};
@@ -61,8 +101,8 @@ export function NotificationChannelList() {
 
     setFormName('');
     setFormType('slack');
-    setFormWebhookUrl('');
-    setFormRecipients('');
+    setFormPrimaryValue('');
+    setFormSecret('');
     setFormSeverities('');
     setFormServices('');
     setShowForm(false);
@@ -71,8 +111,14 @@ export function NotificationChannelList() {
   const startEdit = (ch: NotificationChannel) => {
     setEditingId(ch.id);
     setEditName(ch.name);
-    setEditWebhookUrl(ch.channel_type === 'slack' ? (ch.config.webhook_url as string || '') : '');
-    setEditRecipients(ch.channel_type === 'email' ? ((ch.config.recipients as string[])?.join(', ') || '') : '');
+    if (ch.channel_type === 'email') {
+      setEditPrimaryValue((ch.config.recipients as string[])?.join(', ') || '');
+    } else if (ch.channel_type === 'pagerduty') {
+      setEditPrimaryValue(ch.config.routing_key as string || '');
+    } else {
+      setEditPrimaryValue(ch.config.webhook_url as string || '');
+    }
+    setEditSecret(ch.config.secret as string || '');
     setEditSeverities(ch.filters.severity?.join(', ') || '');
     setEditServices(ch.filters.service?.join(', ') || '');
     setEditIsActive(ch.is_active);
@@ -82,10 +128,15 @@ export function NotificationChannelList() {
     if (!editingId || !editName) return;
 
     const config: Record<string, unknown> = {};
-    if (ch.channel_type === 'slack') {
-      config.webhook_url = editWebhookUrl;
+    if (ch.channel_type === 'email') {
+      config.recipients = editPrimaryValue.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (ch.channel_type === 'pagerduty') {
+      config.routing_key = editPrimaryValue;
     } else {
-      config.recipients = editRecipients.split(',').map(s => s.trim()).filter(Boolean);
+      config.webhook_url = editPrimaryValue;
+    }
+    if (ch.channel_type === 'webhook' && editSecret.trim()) {
+      config.secret = editSecret.trim();
     }
 
     const filters: Record<string, unknown> = {};
@@ -108,7 +159,7 @@ export function NotificationChannelList() {
   const handleTest = async (id: string) => {
     try {
       const result = await testChannel(id);
-      setTestResult({ id, msg: result.message, ok: result.status === 'ok' });
+      setTestResult({ id, msg: result.message || 'Sent', ok: result.status === 'sent' || result.status === 'ok' });
     } catch (e) {
       setTestResult({ id, msg: e instanceof Error ? e.message : 'Test failed', ok: false });
     }
@@ -143,21 +194,28 @@ export function NotificationChannelList() {
             </div>
             <div>
               <label className={labelClass}>Type</label>
-              <select value={formType} onChange={e => setFormType(e.target.value as 'slack' | 'email')} className={inputClass}>
-                <option value="slack">Slack</option>
-                <option value="email">Email</option>
+              <select value={formType} onChange={e => { setFormType(e.target.value as ChannelType); setFormPrimaryValue(''); setFormSecret(''); }} className={inputClass}>
+                {CHANNEL_TYPES.map(ct => (
+                  <option key={ct.value} value={ct.value}>{ct.label}</option>
+                ))}
               </select>
             </div>
 
-            {formType === 'slack' ? (
+            <div className="col-span-2">
+              <label className={labelClass}>{configFields.label}</label>
+              <input
+                type="text"
+                value={formPrimaryValue}
+                onChange={e => setFormPrimaryValue(e.target.value)}
+                placeholder={configFields.placeholder}
+                className={inputClass}
+              />
+            </div>
+
+            {formType === 'webhook' && (
               <div className="col-span-2">
-                <label className={labelClass}>Webhook URL</label>
-                <input type="text" value={formWebhookUrl} onChange={e => setFormWebhookUrl(e.target.value)} placeholder="https://hooks.slack.com/services/..." className={inputClass} />
-              </div>
-            ) : (
-              <div className="col-span-2">
-                <label className={labelClass}>Recipients (comma-separated emails)</label>
-                <input type="text" value={formRecipients} onChange={e => setFormRecipients(e.target.value)} placeholder="team@example.com, oncall@example.com" className={inputClass} />
+                <label className={labelClass}>Secret (optional — sent as X-Solace-Secret header)</label>
+                <input type="text" value={formSecret} onChange={e => setFormSecret(e.target.value)} placeholder="Optional shared secret for HMAC verification" className={inputClass} />
               </div>
             )}
 
@@ -173,7 +231,7 @@ export function NotificationChannelList() {
             <div className="col-span-2">
               <button
                 onClick={handleCreate}
-                disabled={!formName || (formType === 'slack' ? !formWebhookUrl : !formRecipients)}
+                disabled={!formName || !formPrimaryValue}
                 className="px-4 py-1.5 text-xs font-medium rounded-md bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 Create Channel
@@ -198,7 +256,7 @@ export function NotificationChannelList() {
         {!loading && channels.length === 0 && (
           <div className="flex flex-col items-center justify-center h-40 text-solace-muted">
             <span className="text-sm">No notification channels configured</span>
-            <span className="text-xs mt-1">Create a channel to start receiving alerts via Slack or email</span>
+            <span className="text-xs mt-1">Create a channel to receive incident alerts via Slack, Teams, Email, Webhook, or PagerDuty</span>
           </div>
         )}
         <div className="divide-y divide-solace-border/50">
@@ -225,15 +283,15 @@ export function NotificationChannelList() {
                       </label>
                     </div>
 
-                    {ch.channel_type === 'slack' ? (
+                    <div className="col-span-2">
+                      <label className={labelClass}>{getConfigFields(ch.channel_type as ChannelType).label}</label>
+                      <input type="text" value={editPrimaryValue} onChange={e => setEditPrimaryValue(e.target.value)} className={inputClass} />
+                    </div>
+
+                    {ch.channel_type === 'webhook' && (
                       <div className="col-span-2">
-                        <label className={labelClass}>Webhook URL</label>
-                        <input type="text" value={editWebhookUrl} onChange={e => setEditWebhookUrl(e.target.value)} className={inputClass} />
-                      </div>
-                    ) : (
-                      <div className="col-span-2">
-                        <label className={labelClass}>Recipients (comma-separated)</label>
-                        <input type="text" value={editRecipients} onChange={e => setEditRecipients(e.target.value)} className={inputClass} />
+                        <label className={labelClass}>Secret (optional)</label>
+                        <input type="text" value={editSecret} onChange={e => setEditSecret(e.target.value)} placeholder="Optional shared secret" className={inputClass} />
                       </div>
                     )}
 
@@ -299,6 +357,8 @@ function ChannelRow({
   onTest: () => void;
   testResult: { msg: string; ok: boolean } | null;
 }) {
+  const badge = CHANNEL_BADGE[channel.channel_type] || { bg: 'bg-gray-500/10', text: 'text-gray-400' };
+
   return (
     <div>
       <div
@@ -311,11 +371,7 @@ function ChannelRow({
         }`} />
 
         {/* Type badge */}
-        <span className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded ${
-          channel.channel_type === 'slack'
-            ? 'bg-purple-500/10 text-purple-400'
-            : 'bg-blue-500/10 text-blue-400'
-        }`}>
+        <span className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded ${badge.bg} ${badge.text}`}>
           {channel.channel_type.toUpperCase()}
         </span>
 

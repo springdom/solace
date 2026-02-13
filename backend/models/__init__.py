@@ -331,6 +331,9 @@ class SilenceWindow(Base):
 class ChannelType(enum.StrEnum):
     SLACK = "slack"
     EMAIL = "email"
+    TEAMS = "teams"
+    WEBHOOK = "webhook"
+    PAGERDUTY = "pagerduty"
 
 
 class NotificationStatus(enum.StrEnum):
