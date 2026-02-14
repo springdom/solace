@@ -23,6 +23,7 @@ import { LoginPage } from './components/LoginPage';
 import { ChangePasswordPage } from './components/ChangePasswordPage';
 import { UserManagement } from './components/UserManagement';
 import { OnCallView } from './components/OnCallView';
+import { RunbookRulesList } from './components/RunbookRulesList';
 import type { SortOption } from './components/SortControl';
 
 type View = 'alerts' | 'incidents' | 'silences' | 'channels' | 'settings' | 'oncall' | 'users' | 'statistics';
@@ -799,7 +800,7 @@ function Dashboard({ user, logout, isRole }: {
                       key={incident.id}
                       incident={incident}
                       selected={selectedIncident?.id === incident.id}
-                      onSelect={selectIncident}
+                      onSelect={(inc) => { selectAlert(null); selectIncident(inc); }}
                       onAcknowledge={isViewer ? undefined : handleIncidentAck}
                       onResolve={isViewer ? undefined : handleIncidentResolve}
                     />
@@ -1052,6 +1053,11 @@ function SettingsView({
           </div>
         </section>
       )}
+
+      {/* Runbook Rules */}
+      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+        <RunbookRulesList isAdmin={isAdmin} />
+      </section>
 
       {/* Dashboard URL */}
       {settings?.solace_dashboard_url && (

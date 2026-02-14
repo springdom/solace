@@ -82,7 +82,8 @@ Open-source alert management and incident response platform. Ingest alerts from 
 - **Tags** — Free-form string tags with add/remove from UI or API; stored as JSONB with GIN index for fast queries
 - **Investigation notes** — Timestamped notes with author attribution and full CRUD
 - **External ticket linking** — Link alerts to Jira, GitHub, or any URL; auto-prepends `https://` if missing
-- **Runbook URL** — Each alert can carry a runbook link from the source system
+- **Runbook URL** — Editable from the alert detail panel; manually paste a URL or auto-attach via runbook rules
+- **Runbook rules** — Pattern-based rules that auto-attach runbook URLs to incoming alerts. Define a service glob pattern (e.g., `payment-*`), an optional name pattern, and a URL template with variables (`{service}`, `{host}`, `{name}`, `{environment}`). First matching rule wins (priority-ordered). "Save as Rule" checkbox on the alert panel creates a rule from the current alert in one click.
 - **Raw payload** — Full original webhook payload preserved for forensic inspection
 
 ### Dashboard & UI
@@ -348,6 +349,7 @@ curl -X POST http://localhost:8000/api/v1/notifications/channels \
 | `DELETE` | `/api/v1/alerts/notes/{id}` | Delete a note |
 | `GET` | `/api/v1/alerts/{id}/history` | Get occurrence timeline |
 | `PUT` | `/api/v1/alerts/{id}/ticket` | Set external ticket URL |
+| `PUT` | `/api/v1/alerts/{id}/runbook` | Set runbook URL (optionally create rule) |
 | `POST` | `/api/v1/alerts/bulk/acknowledge` | Bulk acknowledge |
 | `POST` | `/api/v1/alerts/bulk/resolve` | Bulk resolve |
 | `POST` | `/api/v1/alerts/archive` | Archive old resolved alerts |
@@ -407,6 +409,14 @@ curl -X POST http://localhost:8000/api/v1/notifications/channels \
 | `GET` | `/api/v1/oncall/mappings` | List service-to-policy mappings |
 | `POST` | `/api/v1/oncall/mappings` | Create mapping (admin) |
 | `DELETE` | `/api/v1/oncall/mappings/{id}` | Delete mapping (admin) |
+
+### Runbook Rules
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/runbooks/rules` | List runbook rules |
+| `POST` | `/api/v1/runbooks/rules` | Create rule (admin) |
+| `PUT` | `/api/v1/runbooks/rules/{id}` | Update rule (admin) |
+| `DELETE` | `/api/v1/runbooks/rules/{id}` | Delete rule (admin) |
 
 ### Stats & Settings
 | Method | Endpoint | Description |
@@ -498,7 +508,7 @@ cd frontend && npm install && npm run dev
 - [x] Silence / maintenance windows with flexible matchers
 - [x] Alert tagging and investigation notes
 - [x] External ticket URL linking (Jira, GitHub, etc.)
-- [x] Runbook URL support
+- [x] Runbook URL support with editable UI and auto-attach rules
 - [x] Bulk acknowledge/resolve operations
 - [x] Archive old resolved alerts
 - [x] Dashboard stats (MTTA, MTTR, counts by status/severity)

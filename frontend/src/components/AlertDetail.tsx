@@ -38,6 +38,11 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
   const [ticketInput, setTicketInput] = useState('');
   const [editingTicket, setEditingTicket] = useState(false);
 
+  // Runbook URL state
+  const [runbookInput, setRunbookInput] = useState('');
+  const [editingRunbook, setEditingRunbook] = useState(false);
+  const [createRunbookRule, setCreateRunbookRule] = useState(false);
+
   // Occurrence history
   const [occurrences, setOccurrences] = useState<AlertOccurrence[]>([]);
   const [showOccurrences, setShowOccurrences] = useState(false);
@@ -120,6 +125,21 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
       setTicketInput('');
     } catch {}
   }, [alert, ticketInput]);
+
+  const handleSetRunbook = useCallback(async () => {
+    if (!runbookInput.trim()) return;
+    let url = runbookInput.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'https://' + url;
+    }
+    try {
+      const updated = await api.alerts.setRunbookUrl(alert.id, url, createRunbookRule);
+      alert.runbook_url = updated.runbook_url ?? url;
+      setEditingRunbook(false);
+      setRunbookInput('');
+      setCreateRunbookRule(false);
+    } catch {}
+  }, [alert, runbookInput, createRunbookRule]);
 
   // Build attributes table rows
   const attributes = [
@@ -288,19 +308,68 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
                 </a>
               </div>
             )}
-            {alert.runbook_url && (
-              <div>
-                <a
-                  href={ensureProtocol(alert.runbook_url)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
-                >
-                  <ExternalLinkIcon />
-                  Runbook
-                </a>
-              </div>
-            )}
+            {/* Runbook URL */}
+            <div>
+              {alert.runbook_url && !editingRunbook ? (
+                <div className="flex items-center gap-2">
+                  <a
+                    href={ensureProtocol(alert.runbook_url)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline truncate"
+                  >
+                    <ExternalLinkIcon />
+                    Runbook
+                  </a>
+                  <button
+                    onClick={() => { setRunbookInput(alert.runbook_url || ''); setEditingRunbook(true); }}
+                    className="text-[10px] text-solace-muted hover:text-solace-text transition-colors"
+                  >
+                    Edit
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      value={runbookInput}
+                      onChange={e => setRunbookInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSetRunbook(); }}
+                      placeholder="Paste runbook URL (Confluence...)"
+                      className="flex-1 px-2 py-1 text-xs font-mono bg-solace-bg border border-solace-border rounded text-solace-bright placeholder:text-solace-muted/50 focus:outline-none focus:border-blue-500/50"
+                    />
+                    <button
+                      onClick={handleSetRunbook}
+                      disabled={!runbookInput.trim()}
+                      className="px-2 py-1 text-xs font-medium rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Link
+                    </button>
+                    {editingRunbook && (
+                      <button
+                        onClick={() => setEditingRunbook(false)}
+                        className="px-2 py-1 text-xs text-solace-muted hover:text-solace-text transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                  {alert.service && (
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={createRunbookRule}
+                        onChange={e => setCreateRunbookRule(e.target.checked)}
+                        className="rounded border-solace-border bg-solace-bg text-emerald-500 focus:ring-0 focus:ring-offset-0 w-3 h-3"
+                      />
+                      <span className="text-[10px] text-solace-muted">
+                        Also create rule for future <span className="font-mono text-solace-text">{alert.service}</span> alerts
+                      </span>
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Ticket URL */}
             <div>
@@ -350,7 +419,7 @@ export function AlertDetail({ alert, onAcknowledge, onResolve, onClose, onTagAdd
               )}
             </div>
 
-            {!alert.generator_url && !alert.runbook_url && !alert.ticket_url && !editingTicket && (
+            {!alert.generator_url && !alert.runbook_url && !alert.ticket_url && !editingTicket && !editingRunbook && (
               <div className="text-xs text-solace-muted italic">No links</div>
             )}
           </div>

@@ -193,6 +193,16 @@ class AlertTicketUpdate(BaseModel):
     ticket_url: str = Field(..., max_length=2000, description="External ticket URL")
 
 
+class AlertRunbookUpdate(BaseModel):
+    """Set or update the runbook URL on an alert."""
+
+    runbook_url: str = Field(..., max_length=2000, description="Runbook URL")
+    create_rule: bool = Field(
+        default=False,
+        description="Also create a runbook rule from this alert's service/name",
+    )
+
+
 # ─── Alert Occurrence History ──────────────────────────────
 
 
@@ -709,3 +719,52 @@ class ServiceMappingResponse(BaseModel):
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+# ─── Runbook Rules ───────────────────────────────────────
+
+
+class RunbookRuleCreate(BaseModel):
+    service_pattern: str = Field(
+        ..., max_length=255,
+        description="Glob pattern for service name (e.g. 'billing-*', '*')",
+    )
+    name_pattern: str | None = Field(
+        default=None, max_length=255,
+        description="Optional glob pattern for alert name",
+    )
+    runbook_url_template: str = Field(
+        ..., max_length=2000,
+        description="URL template with {service}, {host}, {name}, {environment} variables",
+    )
+    description: str | None = Field(default=None, max_length=500)
+    priority: int = Field(default=0, ge=0, le=1000, description="Lower = evaluated first")
+    is_active: bool = True
+
+
+class RunbookRuleUpdate(BaseModel):
+    service_pattern: str | None = Field(default=None, max_length=255)
+    name_pattern: str | None = Field(default=None, max_length=255)
+    runbook_url_template: str | None = Field(default=None, max_length=2000)
+    description: str | None = Field(default=None, max_length=500)
+    priority: int | None = Field(default=None, ge=0, le=1000)
+    is_active: bool | None = None
+
+
+class RunbookRuleResponse(BaseModel):
+    id: uuid.UUID
+    service_pattern: str
+    name_pattern: str | None = None
+    runbook_url_template: str
+    description: str | None = None
+    priority: int = 0
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RunbookRuleListResponse(BaseModel):
+    rules: list[RunbookRuleResponse]
+    total: int

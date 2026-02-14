@@ -458,3 +458,6 @@ from backend.models.oncall import OnCallOverride as OnCallOverride  # noqa: E402
 from backend.models.oncall import OnCallSchedule as OnCallSchedule  # noqa: E402
 from backend.models.oncall import RotationType as RotationType  # noqa: E402
 from backend.models.oncall import ServiceEscalationMapping as ServiceEscalationMapping  # noqa: E402
+
+# ─── Runbook Models (re-exported) ────────────────────────
+from backend.models.runbook import RunbookRule as RunbookRule  # noqa: E402

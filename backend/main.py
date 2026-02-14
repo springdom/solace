@@ -12,6 +12,7 @@ from backend.api.routes import (
     incidents,
     notifications,
     oncall,
+    runbooks,
     silences,
     stats,
     users,
@@ -123,3 +124,4 @@ app.include_router(notifications.router, prefix=settings.api_prefix, dependencie
 app.include_router(settings_routes.router, prefix=settings.api_prefix, dependencies=api_deps)
 app.include_router(users.router, prefix=settings.api_prefix, dependencies=api_deps)
 app.include_router(oncall.router, prefix=settings.api_prefix, dependencies=api_deps)
+app.include_router(runbooks.router, prefix=settings.api_prefix, dependencies=api_deps)

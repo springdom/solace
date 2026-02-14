@@ -18,6 +18,7 @@ from backend.schemas import (
     AlertOccurrenceListResponse,
     AlertOccurrenceResponse,
     AlertResponse,
+    AlertRunbookUpdate,
     AlertTagsUpdate,
     AlertTicketUpdate,
     BulkAlertActionRequest,
@@ -350,6 +351,49 @@ async def set_ticket_url(
     alert.ticket_url = url
     alert.updated_at = datetime.now(UTC)
     await db.flush()
+    await db.refresh(alert)
+    return AlertResponse.model_validate(alert)
+
+
+# ─── Runbook URL ──────────────────────────────────────────
+
+
+@router.put(
+    "/{alert_id}/runbook",
+    response_model=AlertResponse,
+    summary="Set or update runbook URL",
+)
+async def set_runbook_url(
+    alert_id: uuid.UUID,
+    body: AlertRunbookUpdate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
+    db: AsyncSession = Depends(get_db),
+) -> AlertResponse:
+    """Link an alert to a runbook. Optionally create a rule for future alerts."""
+    stmt = select(Alert).where(Alert.id == alert_id)
+    result = await db.execute(stmt)
+    alert = result.scalar_one_or_none()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    url = body.runbook_url.strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    alert.runbook_url = url
+    alert.updated_at = datetime.now(UTC)
+    await db.flush()
+
+    # Optionally create a rule from this alert
+    if body.create_rule and alert.service:
+        from backend.services.runbook import create_runbook_rule
+
+        await create_runbook_rule(
+            db,
+            service_pattern=alert.service,
+            runbook_url_template=url,
+            description=f"Auto-created from alert: {alert.name[:100]}",
+        )
+
     await db.refresh(alert)
     return AlertResponse.model_validate(alert)
 

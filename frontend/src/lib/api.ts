@@ -5,7 +5,8 @@ import type {
   IncidentListResponse, LoginResponse, NotificationChannel,
   NotificationChannelListResponse, NotificationLogListResponse,
   OnCallCurrentResponse, OnCallOverride, OnCallSchedule,
-  OnCallScheduleListResponse, ServiceMapping, SilenceWindow,
+  OnCallScheduleListResponse, RunbookRule, RunbookRuleListResponse,
+  ServiceMapping, SilenceWindow,
   SilenceWindowListResponse, UserListResponse, UserProfile,
 } from './types';
 
@@ -209,6 +210,12 @@ export const api = {
         body: JSON.stringify({ ticket_url: ticketUrl }),
       });
     },
+    setRunbookUrl(alertId: string, runbookUrl: string, createRule?: boolean) {
+      return request<Alert>(`/alerts/${alertId}/runbook`, {
+        method: 'PUT',
+        body: JSON.stringify({ runbook_url: runbookUrl, create_rule: createRule ?? false }),
+      });
+    },
     bulkAcknowledge(alertIds: string[]) {
       return request<{ updated: number; alert_ids: string[] }>('/alerts/bulk/acknowledge', {
         method: 'POST',
@@ -338,6 +345,21 @@ export const api = {
     },
     deleteMapping(id: string) {
       return authFetch(`/oncall/mappings/${id}`, { method: 'DELETE' });
+    },
+  },
+
+  runbooks: {
+    listRules() {
+      return request<RunbookRuleListResponse>('/runbooks/rules');
+    },
+    createRule(data: { service_pattern: string; name_pattern?: string; runbook_url_template: string; description?: string; priority?: number }) {
+      return request<RunbookRule>('/runbooks/rules', { method: 'POST', body: JSON.stringify(data) });
+    },
+    updateRule(id: string, data: Record<string, unknown>) {
+      return request<RunbookRule>(`/runbooks/rules/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    },
+    deleteRule(id: string) {
+      return authFetch(`/runbooks/rules/${id}`, { method: 'DELETE' });
     },
   },
 };

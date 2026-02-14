@@ -24,7 +24,7 @@ Solace fixes this by automatically correlating alerts from the same service into
 ```
 Prometheus ──┐
 Grafana ─────┤
-Datadog ─────┼──▶ Webhook API ──▶ Normalizer ──▶ Dedup ──▶ Silence ──▶ Correlation
+Datadog ─────┼──▶ Webhook API ──▶ Normalizer ──▶ Dedup ──▶ Runbook ──▶ Silence ──▶ Correlation
 Splunk ──────┤    (X-API-Key)     (pluggable)                              │
 Email ───────┘                                                       Escalation
                                                                       Engine
@@ -371,6 +371,7 @@ Alerts don't exist in isolation — they're automatically grouped into **inciden
 - **On-Call tab** — Manage on-call schedules, escalation policies, and service mappings. Shows who's currently on call.
 - **Silences tab** — Create and manage silence/maintenance windows.
 - **Notifications tab** — Configure notification channels and view delivery logs.
+- **Settings tab** — View app configuration, archive old alerts, and manage runbook rules (auto-attach runbook URLs to alerts by service/name pattern).
 - **Users tab** (Admin only) — Create and manage user accounts.
 - **Severity pills** (top bar) — Click to filter by severity level.
 - **Status tabs** (All / Open / Acknowledged / Resolved) — Filter by status.
@@ -418,7 +419,7 @@ Clicking an alert (either from the Alerts tab or from a correlated alert within 
 - **Labels** — Key=value metadata pills from the source system.
 - **Annotations** — Extended context like runbook URLs, dashboards.
 - **Raw Payload** — Collapsible JSON viewer showing the original webhook payload. Click to expand/collapse.
-- **Links** — Link back to the source system (generator URL).
+- **Links** — Link back to the source system (generator URL), editable runbook URL (with "Save as Rule" checkbox to auto-attach to future alerts), and external ticket URL.
 - **Notes** — Timestamped investigation notes. Add notes with optional author attribution. Notes support create, update, and delete. Displayed newest-first.
 
 ### Actions
@@ -481,6 +482,7 @@ Full interactive docs available at: `http://your-solace-host:8000/docs`
 | `DELETE` | `/alerts/notes/{note_id}` | User+ | Delete a note |
 | `GET` | `/alerts/{id}/history` | Any | Get occurrence timeline |
 | `PUT` | `/alerts/{id}/ticket` | User+ | Set external ticket URL |
+| `PUT` | `/alerts/{id}/runbook` | User+ | Set runbook URL (optional `create_rule` flag) |
 | `POST` | `/alerts/bulk/acknowledge` | User+ | Bulk acknowledge |
 | `POST` | `/alerts/bulk/resolve` | User+ | Bulk resolve |
 | `POST` | `/alerts/archive` | Admin | Archive old resolved alerts |
@@ -524,6 +526,17 @@ Full interactive docs available at: `http://your-solace-host:8000/docs`
 | `GET` | `/oncall/mappings` | Any | List service-to-policy mappings |
 | `POST` | `/oncall/mappings` | Admin | Create mapping |
 | `DELETE` | `/oncall/mappings/{id}` | Admin | Delete mapping |
+
+### Runbook Rules
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/runbooks/rules` | Any | List all runbook rules (ordered by priority) |
+| `POST` | `/runbooks/rules` | Admin | Create runbook rule |
+| `PUT` | `/runbooks/rules/{id}` | Admin | Update runbook rule |
+| `DELETE` | `/runbooks/rules/{id}` | Admin | Delete runbook rule |
+
+Runbook rules auto-attach runbook URLs to incoming alerts during ingestion. Each rule has a `service_pattern` (glob, e.g., `payment-*`), optional `name_pattern`, and a `runbook_url_template` with variables (`{service}`, `{host}`, `{name}`, `{environment}`). Rules are evaluated by priority (lower = first); first match wins. Managed from **Settings > Runbook Rules** in the dashboard.
 
 ### Silences (Maintenance Windows)
 
@@ -671,6 +684,7 @@ Current test coverage: 95 tests covering webhook ingestion, normalization (gener
 - ~~Escalation policies with multi-level targets~~ ✅
 - ~~Service-to-policy mapping with glob patterns~~ ✅
 - ~~Light and dark theme toggle~~ ✅
+- ~~Runbook rules (auto-attach runbook URLs to alerts by pattern)~~ ✅
 
 ### Next Up
 - SSO integration (Google, GitHub, SAML)

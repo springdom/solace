@@ -74,6 +74,24 @@ async def ingest_alert(
 
         return updated, True
 
+    # Step 2.5: Auto-attach runbook URL if not already set
+    if not normalized.runbook_url:
+        from backend.services.runbook import find_matching_runbook
+
+        resolved_url = await find_matching_runbook(
+            db,
+            service=normalized.service,
+            name=normalized.name,
+            host=normalized.host,
+            environment=normalized.environment,
+        )
+        if resolved_url:
+            normalized.runbook_url = resolved_url
+            logger.info(
+                f"Auto-attached runbook URL for alert '{normalized.name}': "
+                f"{resolved_url}"
+            )
+
     # Step 3b: Check silence windows
     silence = await check_silence(db, normalized)
     if silence:

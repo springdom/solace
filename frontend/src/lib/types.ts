@@ -283,3 +283,22 @@ export interface ServiceMapping {
   priority: number;
   created_at: string | null;
 }
+
+// ─── Runbook Rules ───────────────────────────────────────
+
+export interface RunbookRule {
+  id: string;
+  service_pattern: string;
+  name_pattern: string | null;
+  runbook_url_template: string;
+  description: string | null;
+  priority: number;
+  is_active: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface RunbookRuleListResponse {
+  rules: RunbookRule[];
+  total: number;
+}
