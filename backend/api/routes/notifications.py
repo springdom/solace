@@ -37,12 +37,15 @@ async def list_channels(
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all notification channels."""
-    count_result = await db.execute(select(func.count(NotificationChannel.id)))
+    """List all active notification channels."""
+    count_result = await db.execute(
+        select(func.count(NotificationChannel.id)).where(NotificationChannel.is_active.is_(True))
+    )
     total = count_result.scalar() or 0
 
     query = (
         select(NotificationChannel)
+        .where(NotificationChannel.is_active.is_(True))
         .order_by(NotificationChannel.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -104,7 +107,10 @@ async def get_channel(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single notification channel."""
-    stmt = select(NotificationChannel).where(NotificationChannel.id == channel_id)
+    stmt = select(NotificationChannel).where(
+        NotificationChannel.id == channel_id,
+        NotificationChannel.is_active.is_(True),
+    )
     result = await db.execute(stmt)
     channel = result.scalar_one_or_none()
     if not channel:
@@ -120,7 +126,10 @@ async def update_channel(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a notification channel."""
-    stmt = select(NotificationChannel).where(NotificationChannel.id == channel_id)
+    stmt = select(NotificationChannel).where(
+        NotificationChannel.id == channel_id,
+        NotificationChannel.is_active.is_(True),
+    )
     result = await db.execute(stmt)
     channel = result.scalar_one_or_none()
     if not channel:
@@ -143,7 +152,10 @@ async def delete_channel(
     db: AsyncSession = Depends(get_db),
 ):
     """Soft-delete a notification channel (set is_active=False)."""
-    stmt = select(NotificationChannel).where(NotificationChannel.id == channel_id)
+    stmt = select(NotificationChannel).where(
+        NotificationChannel.id == channel_id,
+        NotificationChannel.is_active.is_(True),
+    )
     result = await db.execute(stmt)
     channel = result.scalar_one_or_none()
     if not channel:
@@ -161,7 +173,10 @@ async def test_channel(
     db: AsyncSession = Depends(get_db),
 ):
     """Send a test notification through a channel."""
-    stmt = select(NotificationChannel).where(NotificationChannel.id == channel_id)
+    stmt = select(NotificationChannel).where(
+        NotificationChannel.id == channel_id,
+        NotificationChannel.is_active.is_(True),
+    )
     result = await db.execute(stmt)
     channel = result.scalar_one_or_none()
     if not channel:
