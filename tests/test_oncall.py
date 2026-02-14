@@ -2,15 +2,7 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
-from backend.core.oncall import (
-    find_escalation_policy,
-    get_current_oncall,
-    resolve_escalation_targets,
-)
 from backend.models.oncall import (
     EscalationPolicy,
     OnCallOverride,
@@ -33,7 +25,6 @@ from backend.schemas import (
     ServiceMappingCreate,
     ServiceMappingResponse,
 )
-
 
 # ─── Schema Validation Tests ─────────────────────────────
 
@@ -131,13 +122,13 @@ class TestOnCallSchemas:
 class TestEscalationSchemas:
     def test_policy_create_defaults(self):
         p = EscalationPolicyCreate(name="Default Policy")
-        assert p.repeat is False
+        assert p.repeat_count == 0
         assert p.levels == []
 
     def test_policy_create_with_levels(self):
         p = EscalationPolicyCreate(
             name="Multi-Level",
-            repeat=True,
+            repeat_count=3,
             levels=[
                 {
                     "level": 1,
@@ -152,12 +143,12 @@ class TestEscalationSchemas:
             ],
         )
         assert len(p.levels) == 2
-        assert p.repeat is True
+        assert p.repeat_count == 3
 
     def test_policy_update_partial(self):
-        p = EscalationPolicyUpdate(repeat=True)
+        p = EscalationPolicyUpdate(repeat_count=2)
         dumped = p.model_dump(exclude_unset=True)
-        assert "repeat" in dumped
+        assert "repeat_count" in dumped
         assert "name" not in dumped
 
     def test_policy_response(self):
@@ -165,7 +156,7 @@ class TestEscalationSchemas:
         data = {
             "id": uuid.uuid4(),
             "name": "Default",
-            "repeat": False,
+            "repeat_count": 0,
             "levels": [],
             "created_at": now,
             "updated_at": now,
