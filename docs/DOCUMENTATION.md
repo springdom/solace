@@ -119,7 +119,7 @@ For best results, modify your SPL query to aggregate results before sending. Thi
 Example — current email-based query:
 
 ```spl
-index=* source="/var/log/APP/APP.log"
+index=*
 | rex field=_raw "(?<message>ERROR|FATAL)"
 | search message="ERROR" OR message="FATAL"
 | table host, source, message, _raw
@@ -128,7 +128,7 @@ index=* source="/var/log/APP/APP.log"
 Recommended webhook-optimized version:
 
 ```spl
-index=* source="/var/log/APP/APP.log"
+index=*
 | rex field=_raw "(?<message>ERROR|FATAL)"
 | search message="ERROR" OR message="FATAL"
 | stats count as error_count
@@ -203,7 +203,7 @@ The email normalizer:
 - Extracts the alert name from the subject line (strips "Splunk Alert:" prefix)
 - Parses the HTML table into individual rows
 - Creates one alert per row, using the same field extraction as the webhook normalizer
-- If no explicit `service` field exists, derives it from the log path (e.g., `/opt/app/SERVICE_NAME/log/...` → `APPNAME`)
+- If no explicit `service` field exists, derives it from the log path (e.g., `/opt/app/SERVICE_NAME/log/...` → `SERVICE_NAME`)
 - Falls back to tab-delimited or pipe-delimited plain text if no HTML table is found
 - Creates a single alert from the email body if no table is parseable
 

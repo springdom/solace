@@ -7,7 +7,7 @@ from backend.integrations.email_ingest import (
     parse_plain_text_table,
 )
 
-# ─── Realistic Splunk alert email (based on user's actual query output) ───
+# ─── Realistic Splunk alert email (example format) ──────────────────
 
 SPLUNK_HTML_EMAIL = {
     "subject": "Splunk Alert: Production ERROR/FATAL Monitor",
@@ -27,7 +27,7 @@ SPLUNK_HTML_EMAIL = {
         <td>app-prod-web-2.internal.example.com</td>
         <td>/opt/apps/billing-svc/logs/billing-svc.log</td>
         <td>ERROR</td>
-        <td>2026-02-12 04:10:57.489 [ajp-nio-10.0.0.2-10022-exec-2]
+        <td>2026-02-12 04:10:57.489 [http-nio-8080-exec-2]
 ERROR o.a.c.c.C - dispatcherServlet threw exception</td>
     </tr>
     <tr>
@@ -97,14 +97,14 @@ PLAIN_TEXT_EMAIL = {
         "db-02\t/var/log/syslog\tDisk 88% full"
     ),
     "from": "splunk@example.com",
-    "to": "alerts@company.com",
+    "to": "alerts@example.com",
 }
 
 MINIMAL_EMAIL = {
     "subject": "Splunk Alert: Something Happened",
     "body_text": "An alert was triggered but no table data is available.",
     "from": "splunk@example.com",
-    "to": "alerts@company.com",
+    "to": "alerts@example.com",
 }
 
 
@@ -229,7 +229,7 @@ class TestEmailValidation:
 
 class TestEmailNormalization:
     def test_html_email_produces_multiple_alerts(self):
-        """Your actual Splunk email format with 3 result rows."""
+        """Splunk email format with 3 result rows."""
         n = EmailNormalizer()
         alerts = n.normalize(SPLUNK_HTML_EMAIL)
 
