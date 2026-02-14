@@ -7,7 +7,7 @@ Last updated: February 2026
 
 ## What is Solace?
 
-Solace is a self-hosted alert management platform that ingests alerts from monitoring tools (currently Splunk), deduplicates them, automatically groups related alerts into incidents, and provides a single dashboard to manage the response.
+Solace is a self-hosted alert management platform that ingests alerts from monitoring tools (Prometheus, Grafana, Datadog, Splunk, and more), deduplicates them, automatically groups related alerts into incidents, and provides a single dashboard to manage the response — complete with user authentication, on-call scheduling, and escalation policies.
 
 Think of it as a lightweight, open-source alternative to PagerDuty or Opsgenie that we control entirely.
 
@@ -22,21 +22,24 @@ Solace fixes this by automatically correlating alerts from the same service into
 ## Architecture Overview
 
 ```
-Splunk ──┐
-         ├──▶ Webhook API ──▶ Normalizer ──▶ Dedup Engine ──▶ Correlation Engine
-Email ───┘    (FastAPI)       (pluggable)    (fingerprint)    (service-based)
-                                                                    │
-                                                              PostgreSQL
-                                                                    │
-                                                            React Dashboard
+Prometheus ──┐
+Grafana ─────┤
+Datadog ─────┼──▶ Webhook API ──▶ Normalizer ──▶ Dedup ──▶ Silence ──▶ Correlation
+Splunk ──────┤    (X-API-Key)     (pluggable)                              │
+Email ───────┘                                                       Escalation
+                                                                      Engine
+                    JWT Auth ◀── React Dashboard ──▶ On-Call UI            │
+                       │              │                                    │
+                       ▼              ▼                                    ▼
+                    Users        PostgreSQL + Redis              Notifications
 ```
 
 **Components:**
 
-- **FastAPI backend** — Python async API server. Handles webhook ingestion, alert/incident CRUD, and serves the REST API.
-- **PostgreSQL** — Stores alerts, incidents, and timeline events. Schema managed by Alembic migrations.
-- **Redis** — Used for caching and future background job processing.
-- **React frontend** — Single-page dashboard built with Vite + Tailwind CSS. Dark theme, real-time alert/incident views.
+- **FastAPI backend** — Python 3.12 async API server. Handles webhook ingestion, alert/incident CRUD, authentication, on-call scheduling, escalation, and the REST API.
+- **PostgreSQL 16** — Stores alerts, incidents, users, on-call schedules, escalation policies, and timeline events. Schema managed by Alembic migrations.
+- **Redis 7** — Used for caching, notification cooldown tracking, and settings overrides.
+- **React frontend** — Single-page dashboard built with Vite + TypeScript + Tailwind CSS. Light/dark theme toggle, JWT auth, real-time WebSocket updates, on-call management UI.
 
 All components run as Docker containers via `docker compose`.
 
@@ -68,9 +71,11 @@ This starts four containers:
 
 ### Accessing
 
-- **Dashboard:** http://localhost:3000
+- **Dashboard:** http://localhost:3000 (login: `admin` / `admin`)
 - **API documentation (Swagger):** http://localhost:8000/docs
 - **Health check:** http://localhost:8000/health
+
+On first login, you'll be prompted to change the default admin password.
 
 ### Updating
 
@@ -89,9 +94,121 @@ All settings are via environment variables (set in `docker-compose.yml` or a `.e
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql+asyncpg://solace:solace@db:5432/solace` | PostgreSQL connection string |
 | `REDIS_URL` | `redis://redis:6379/0` | Redis connection string |
+| `API_KEY` | `""` | API key for webhook ingestion (empty = no auth in dev) |
+| `SECRET_KEY` | `change-me-to-a-random-secret-key` | Secret for JWT signing |
+| `ADMIN_USERNAME` | `admin` | Default admin username (auto-created on first startup) |
+| `ADMIN_PASSWORD` | `admin` | Default admin password |
+| `ADMIN_EMAIL` | `admin@solace.local` | Default admin email |
+| `JWT_EXPIRE_MINUTES` | `480` | JWT token expiry in minutes (8 hours) |
 | `DEDUP_WINDOW_SECONDS` | `300` | How long (in seconds) to treat identical alerts as duplicates. Default 5 minutes. |
 | `CORRELATION_WINDOW_SECONDS` | `600` | How long (in seconds) to group alerts from the same service into one incident. Default 10 minutes. |
+| `NOTIFICATION_COOLDOWN_SECONDS` | `300` | Per-channel, per-incident notification cooldown (5 min) |
+| `SOLACE_DASHBOARD_URL` | `http://localhost:3000` | Dashboard URL used in notification links |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
+
+---
+
+## Authentication & Access Control
+
+### Overview
+
+Solace uses JWT-based authentication for user sessions and API key authentication for webhook ingestion. A default admin account is automatically created on first startup.
+
+### Roles
+
+| Role | Read | Acknowledge/Resolve | Admin Actions |
+|------|------|---------------------|---------------|
+| **Admin** | All data | Alerts, incidents | Users, silences, notification channels, on-call, settings |
+| **User** | All data | Alerts, incidents | — |
+| **Viewer** | All data | — | — |
+
+### Login Flow
+
+1. Navigate to the dashboard — you'll see the login page
+2. Enter username and password
+3. On first login with the default admin account, you'll be prompted to set a new password
+4. JWT token is stored in the browser and used for all subsequent API calls (8-hour expiry)
+
+### API Authentication
+
+**User sessions (JWT):**
+```bash
+# Login to get a token
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"your-password"}' | jq -r .access_token)
+
+# Use the token for API calls
+curl http://localhost:8000/api/v1/alerts \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Webhook ingestion (API key):**
+```bash
+# Webhooks use X-API-Key header (unchanged from before)
+curl -X POST http://localhost:8000/api/v1/webhooks/generic \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"TestAlert","severity":"warning","service":"my-svc"}'
+```
+
+In development mode (when `API_KEY` is empty), authentication is bypassed for convenience.
+
+### User Management
+
+Admins can manage users from the **Users** tab in the dashboard:
+
+- **Create user** — Set email, username, password, and role
+- **Edit user** — Change display name, role, or active status
+- **Reset password** — Set a new password for a user (they'll be prompted to change it)
+- **Deactivate** — Disable a user account (admins cannot deactivate themselves)
+
+---
+
+## On-Call Scheduling
+
+### Schedules
+
+On-call schedules define who is on call and when. Each schedule has:
+
+- **Rotation type** — Hourly, daily, weekly, or custom
+- **Members** — Ordered list of users who rotate through on-call duty
+- **Handoff time** — Time of day when rotation handoffs occur (e.g., 09:00)
+- **Timezone** — All handoff calculations are timezone-aware
+- **Effective from** — When the schedule starts
+
+**Rotation calculation:** The current on-call person is determined by how many rotation intervals have elapsed since `effective_from`, indexed into the members list. For example, with a weekly rotation and 3 members starting Jan 1:
+- Jan 1-7: Member 1, Jan 8-14: Member 2, Jan 15-21: Member 3, Jan 22-28: Member 1 (wraps)
+
+### Overrides
+
+Temporary overrides allow swapping who is on call for a specific time range. Overrides take priority over the regular rotation. Common use cases:
+
+- Covering for a teammate who is on vacation
+- Swapping shifts for personal scheduling
+- Emergency coverage changes
+
+### Escalation Policies
+
+Escalation policies define what happens when an incident occurs for a service:
+
+- **Levels** — Each policy has one or more escalation levels
+- **Targets** — Each level notifies one or more targets (individual users or the current on-call from a schedule)
+- **Timeout** — If no one acknowledges within the timeout (1-1440 minutes), escalation advances to the next level
+- **Repeat** — Policies can repeat through all levels N times
+
+### Service Mappings
+
+Service mappings connect services to escalation policies:
+
+- **Service pattern** — Glob pattern matching (e.g., `billing-*` matches `billing-api`, `billing-worker`)
+- **Severity filter** — Optionally only escalate for certain severities (e.g., critical, high)
+- **Priority** — When multiple patterns match, the lowest priority number wins (0 = highest priority)
+
+**Example setup:**
+1. Create a schedule: "Platform On-Call" with 3 engineers on weekly rotation
+2. Create a policy: Level 1 notifies the Platform On-Call schedule (5 min timeout), Level 2 notifies the engineering manager directly
+3. Create a mapping: `platform-*` service pattern → Platform Escalation Policy
 
 ---
 
@@ -251,8 +368,14 @@ Alerts don't exist in isolation — they're automatically grouped into **inciden
 
 - **Incidents tab** — Shows grouped incidents. Click any incident to open the detail panel with correlated alerts, timeline, and actions.
 - **Alerts tab** — Shows individual alerts with dedup counts.
+- **On-Call tab** — Manage on-call schedules, escalation policies, and service mappings. Shows who's currently on call.
+- **Silences tab** — Create and manage silence/maintenance windows.
+- **Notifications tab** — Configure notification channels and view delivery logs.
+- **Users tab** (Admin only) — Create and manage user accounts.
 - **Severity pills** (top bar) — Click to filter by severity level.
 - **Status tabs** (All / Open / Acknowledged / Resolved) — Filter by status.
+- **Theme toggle** — Switch between dark and light themes using the sun/moon icon in the header.
+- **User menu** — Shows your name and role; click to logout.
 
 ### Search
 
@@ -312,45 +435,124 @@ Base URL: `http://your-solace-host:8000/api/v1`
 
 Full interactive docs available at: `http://your-solace-host:8000/docs`
 
-### Ingestion
+### Authentication
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/auth/login` | None | Login with username/password, returns JWT |
+| `GET` | `/auth/me` | JWT | Get current user profile |
+| `POST` | `/auth/change-password` | JWT | Change password |
+
+### Users (Admin only)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/users` | List users (paginated) |
+| `POST` | `/users` | Create user |
+| `PUT` | `/users/{id}` | Update user profile/role |
+| `POST` | `/users/{id}/reset-password` | Reset user password |
+| `DELETE` | `/users/{id}` | Deactivate user |
+
+### Ingestion (API key auth)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/webhooks/generic` | Generic JSON alert |
 | `POST` | `/webhooks/prometheus` | Prometheus Alertmanager payload |
+| `POST` | `/webhooks/grafana` | Grafana unified alerting |
+| `POST` | `/webhooks/datadog` | Datadog monitor webhook |
 | `POST` | `/webhooks/splunk` | Splunk webhook payload |
-| `POST` | `/webhooks/email` | Splunk alert email (HTML/text) |
+| `POST` | `/webhooks/email_ingest` | Email-based alert ingestion |
 
 ### Alerts
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/alerts` | List alerts. Query params: `status`, `severity`, `service`, `search`, `sort_by`, `sort_order`, `page`, `page_size` |
-| `GET` | `/alerts/{id}` | Get single alert by ID |
-| `POST` | `/alerts/{id}/acknowledge` | Acknowledge an alert |
-| `POST` | `/alerts/{id}/resolve` | Resolve an alert |
-| `PUT` | `/alerts/{id}/tags` | Replace all tags on an alert |
-| `POST` | `/alerts/{id}/tags/{tag}` | Add a single tag |
-| `DELETE` | `/alerts/{id}/tags/{tag}` | Remove a single tag |
-| `GET` | `/alerts/{id}/notes` | List notes for an alert |
-| `POST` | `/alerts/{id}/notes` | Add a note (body: `text`, optional `author`) |
-| `PUT` | `/alerts/notes/{note_id}` | Update a note |
-| `DELETE` | `/alerts/notes/{note_id}` | Delete a note |
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/alerts` | Any | List alerts (filterable, sortable, paginated) |
+| `GET` | `/alerts/{id}` | Any | Get single alert by ID |
+| `POST` | `/alerts/{id}/acknowledge` | User+ | Acknowledge an alert |
+| `POST` | `/alerts/{id}/resolve` | User+ | Resolve an alert |
+| `PUT` | `/alerts/{id}/tags` | User+ | Replace all tags on an alert |
+| `POST` | `/alerts/{id}/tags/{tag}` | User+ | Add a single tag |
+| `DELETE` | `/alerts/{id}/tags/{tag}` | User+ | Remove a single tag |
+| `GET` | `/alerts/{id}/notes` | Any | List notes for an alert |
+| `POST` | `/alerts/{id}/notes` | User+ | Add a note |
+| `PUT` | `/alerts/notes/{note_id}` | User+ | Update a note |
+| `DELETE` | `/alerts/notes/{note_id}` | User+ | Delete a note |
+| `GET` | `/alerts/{id}/history` | Any | Get occurrence timeline |
+| `PUT` | `/alerts/{id}/ticket` | User+ | Set external ticket URL |
+| `POST` | `/alerts/bulk/acknowledge` | User+ | Bulk acknowledge |
+| `POST` | `/alerts/bulk/resolve` | User+ | Bulk resolve |
+| `POST` | `/alerts/archive` | Admin | Archive old resolved alerts |
 
 ### Incidents
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/incidents` | List incidents. Query params: `status`, `search`, `sort_by`, `sort_order`, `page`, `page_size` |
-| `GET` | `/incidents/{id}` | Get incident with full alert list and timeline |
-| `POST` | `/incidents/{id}/acknowledge` | Acknowledge incident + all alerts |
-| `POST` | `/incidents/{id}/resolve` | Resolve incident + all alerts |
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/incidents` | Any | List incidents (filterable, sortable, paginated) |
+| `GET` | `/incidents/{id}` | Any | Get incident with full alert list and timeline |
+| `POST` | `/incidents/{id}/acknowledge` | User+ | Acknowledge incident + all alerts |
+| `POST` | `/incidents/{id}/resolve` | User+ | Resolve incident + all alerts |
 
-### Stats
+### On-Call Schedules
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/oncall/schedules` | Any | List schedules (paginated, `active_only` filter) |
+| `POST` | `/oncall/schedules` | Admin | Create schedule |
+| `GET` | `/oncall/schedules/{id}` | Any | Get schedule |
+| `PUT` | `/oncall/schedules/{id}` | Admin | Update schedule |
+| `DELETE` | `/oncall/schedules/{id}` | Admin | Delete schedule |
+| `GET` | `/oncall/schedules/{id}/current` | Any | Get who is currently on call |
+| `POST` | `/oncall/schedules/{id}/overrides` | Admin | Create temporary override |
+| `DELETE` | `/oncall/overrides/{id}` | Admin | Delete override |
+
+### Escalation Policies
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/oncall/policies` | Any | List escalation policies |
+| `POST` | `/oncall/policies` | Admin | Create policy |
+| `GET` | `/oncall/policies/{id}` | Any | Get policy |
+| `PUT` | `/oncall/policies/{id}` | Admin | Update policy |
+| `DELETE` | `/oncall/policies/{id}` | Admin | Delete policy |
+
+### Service Mappings
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/oncall/mappings` | Any | List service-to-policy mappings |
+| `POST` | `/oncall/mappings` | Admin | Create mapping |
+| `DELETE` | `/oncall/mappings/{id}` | Admin | Delete mapping |
+
+### Silences (Maintenance Windows)
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/silences` | Any | List silence windows |
+| `POST` | `/silences` | Admin | Create silence window |
+| `GET` | `/silences/{id}` | Any | Get silence window |
+| `PUT` | `/silences/{id}` | Admin | Update silence window |
+| `DELETE` | `/silences/{id}` | Admin | Delete silence window |
+
+### Notification Channels
+
+| Method | Endpoint | Role | Description |
+|--------|----------|------|-------------|
+| `GET` | `/notifications/channels` | Any | List all channels |
+| `POST` | `/notifications/channels` | Admin | Create channel |
+| `GET` | `/notifications/channels/{id}` | Any | Get channel |
+| `PUT` | `/notifications/channels/{id}` | Admin | Update channel |
+| `DELETE` | `/notifications/channels/{id}` | Admin | Delete channel |
+| `POST` | `/notifications/channels/{id}/test` | Admin | Send test notification |
+| `GET` | `/notifications/logs` | Any | List delivery logs |
+
+### Stats & Settings
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/stats` | Dashboard statistics (MTTA, MTTR, counts by status/severity) |
+| `GET` | `/settings` | Application configuration |
 
 ### Health
 
@@ -446,10 +648,10 @@ Current test coverage: 95 tests covering webhook ingestion, normalization (gener
 
 | Component | Technology |
 |-----------|-----------|
-| Backend | Python 3.12, FastAPI, async SQLAlchemy, Alembic |
+| Backend | Python 3.12, FastAPI, async SQLAlchemy, Alembic, python-jose (JWT), passlib (bcrypt) |
 | Database | PostgreSQL 16 |
 | Cache | Redis 7 |
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS |
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS, Zustand |
 | Deployment | Docker, Docker Compose |
 | CI/CD | GitHub Actions (lint, test, build) |
 
@@ -457,10 +659,22 @@ Current test coverage: 95 tests covering webhook ingestion, normalization (gener
 
 ## Roadmap
 
-- ~~Notification channels (Slack, email outbound from Solace)~~ ✅
+### Completed
+- ~~Notification channels (Slack, Teams, Email, Webhook, PagerDuty)~~ ✅
 - ~~Silence / maintenance windows (suppress alerts during deployments)~~ ✅
 - ~~Grafana and Datadog normalizers~~ ✅
 - ~~Alert tagging and investigation notes~~ ✅
-- On-call scheduling and escalation policies
-- RBAC and multi-tenancy
+- ~~JWT authentication and default admin account~~ ✅
+- ~~Role-based access control (admin, user, viewer)~~ ✅
+- ~~User management (create, edit, deactivate)~~ ✅
+- ~~On-call scheduling (hourly/daily/weekly/custom rotations)~~ ✅
+- ~~Escalation policies with multi-level targets~~ ✅
+- ~~Service-to-policy mapping with glob patterns~~ ✅
+- ~~Light and dark theme toggle~~ ✅
+
+### Next Up
+- SSO integration (Google, GitHub, SAML)
+- Background escalation checker (auto-escalate unacknowledged incidents)
+- SMS and voice call notifications (Twilio)
 - Metrics and SLA reporting
+- Status pages

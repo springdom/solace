@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: Alpha" />
-  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+" />
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT" />
+  <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+" />
+  <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License: Apache 2.0" />
 </p>
 
 # Solace
@@ -11,6 +11,29 @@ Open-source alert management and incident response platform. Ingest alerts from 
 **Think PagerDuty / OpsGenie, but open-source and self-hosted.**
 
 ## Features
+
+### Authentication & Access Control
+- **JWT-based authentication** — Secure login with username/password, 8-hour token expiry
+- **Role-based access control (RBAC)** — Three roles: Admin (full access), User (read + acknowledge/resolve), Viewer (read-only)
+- **Default admin account** — Auto-seeded on first startup with configurable credentials
+- **First-login password change** — Admin account requires password change on first login
+- **API key backward compatibility** — Webhook ingestion continues to use `X-API-Key` header, existing integrations unaffected
+- **User management** — Admin panel to create, edit, and deactivate user accounts
+
+### On-Call Scheduling
+- **Flexible rotations** — Hourly, daily, weekly, or custom rotation intervals
+- **Member management** — Add team members to schedules with ordered rotation positions
+- **Timezone-aware handoffs** — Configure handoff time and timezone per schedule
+- **Temporary overrides** — Swap on-call duty for a time range with reason tracking
+- **"Who's On Call" view** — Real-time display of the current on-call person per schedule
+
+### Escalation Policies
+- **Multi-level escalation** — Define escalation levels with configurable timeouts (1-1440 minutes)
+- **Mixed targets** — Each level can notify users directly or the current on-call from a schedule
+- **Repeat support** — Policies can repeat through all levels N times before stopping
+- **Service-to-policy mapping** — Map services to escalation policies using glob patterns (e.g., `billing-*`, `*`)
+- **Priority ordering** — When multiple mappings match, the lowest priority number wins
+- **Severity filtering** — Optionally restrict mappings to specific severity levels
 
 ### Alert Ingestion & Normalization
 - **6 built-in webhook normalizers** — Generic, Prometheus Alertmanager, Grafana, Splunk, Datadog, and Email ingest
@@ -63,7 +86,7 @@ Open-source alert management and incident response platform. Ingest alerts from 
 - **Raw payload** — Full original webhook payload preserved for forensic inspection
 
 ### Dashboard & UI
-- **Dark ops-console theme** — Purpose-built for NOC/operations use with high-contrast dark theme
+- **Light and dark themes** — Toggle between a high-contrast dark ops-console theme and a clean light theme; preference persisted in localStorage
 - **Real-time updates** — WebSocket connection with automatic reconnect and fallback polling
 - **Keyboard shortcuts** — `j`/`k` navigation, `a` acknowledge, `r` resolve, `Esc` close, `?` help
 - **Search & filter** — Full-text search across name, service, host, tags with status/severity/service filters
@@ -72,11 +95,11 @@ Open-source alert management and incident response platform. Ingest alerts from 
 - **Stats bar** — Live counts of alerts by status/severity, incident counts, MTTA, and MTTR
 
 ### API & Integration
-- **Full REST API** — Every feature is accessible via API (alerts, incidents, silences, notifications, stats, settings)
+- **Full REST API** — Every feature is accessible via API (alerts, incidents, silences, notifications, on-call, stats, settings)
 - **OpenAPI docs** — Auto-generated Swagger UI at `/docs`
 - **Health checks** — Liveness (`/health`) and readiness (`/health/ready`) endpoints for Kubernetes probes
 - **WebSocket events** — Real-time event stream for `alert.created`, `incident.updated`, `incident_created`, `severity_changed`, `incident_resolved`
-- **API key auth** — `X-API-Key` header authentication with constant-time comparison
+- **Dual auth** — JWT Bearer tokens for user sessions, `X-API-Key` header for webhook ingestion and external integrations
 
 ## Architecture
 
@@ -84,7 +107,7 @@ Open-source alert management and incident response platform. Ingest alerts from 
 Prometheus ──┐
 Grafana ─────┤                   ┌─────────────┐     ┌────────────┐
 Datadog ─────┼─▶ Webhook API ──▶ │ Normalizer  │ ──▶ │  Dedup     │
-Splunk ──────┤   (FastAPI)       │ (pluggable) │     │  Engine    │
+Splunk ──────┤   (X-API-Key)     │ (pluggable) │     │  Engine    │
 Email ───────┤                   └─────────────┘     └─────┬──────┘
 Custom ──────┘                                             │
                                                      ┌─────▼──────┐
@@ -92,17 +115,22 @@ Custom ──────┘                                             │
                                                      │ Check       │
                                                      └─────┬──────┘
                                                            │
-                                                     ┌─────▼──────┐
-                                                     │ Correlation │──▶ Notifications
-                                                     │ Engine      │    (Slack, Teams,
-                                                     └─────┬──────┘     Email, Webhook,
-                                                           │            PagerDuty)
-                                              ┌────────────▼────────────┐
-                                              │  PostgreSQL + Redis     │
-                                              └────────────┬────────────┘
+                                                     ┌─────▼──────┐     ┌──────────────┐
+                                                     │ Correlation │──▶  │ Notifications │
+                                                     │ Engine      │     └──────┬───────┘
+                                                     └─────┬──────┘            │
+                                                           │            ┌──────▼───────┐
+                                                           │            │  Escalation   │
+                                                           │            │  Engine       │
+                                                           │            └──────┬───────┘
+                                                           │                   │
+                                              ┌────────────▼───────────────────▼┐
+                                              │  PostgreSQL + Redis              │
+                                              └────────────┬────────────────────┘
                                                            │
                                               ┌────────────▼────────────┐
                                               │  React Dashboard (WS)   │
+                                              │  JWT Auth + RBAC        │
                                               │  (Vite + Tailwind)      │
                                               └─────────────────────────┘
 ```
@@ -120,6 +148,8 @@ docker compose up --build
 - **Dashboard:** http://localhost:3000
 - **API:** http://localhost:8000
 - **API Docs:** http://localhost:8000/docs
+
+**Default login:** `admin` / `admin` (you'll be prompted to change the password on first login)
 
 ### Send a test alert
 
@@ -270,6 +300,22 @@ curl -X POST http://localhost:8000/api/v1/notifications/channels \
 
 ## API Endpoints
 
+### Authentication
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/auth/login` | Login with username/password, returns JWT |
+| `GET` | `/api/v1/auth/me` | Get current user profile |
+| `POST` | `/api/v1/auth/change-password` | Change password |
+
+### Users (Admin only)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/users` | List users |
+| `POST` | `/api/v1/users` | Create user |
+| `PUT` | `/api/v1/users/{id}` | Update user profile/role |
+| `POST` | `/api/v1/users/{id}/reset-password` | Reset user password |
+| `DELETE` | `/api/v1/users/{id}` | Deactivate user |
+
 ### Health
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -334,6 +380,34 @@ curl -X POST http://localhost:8000/api/v1/notifications/channels \
 | `POST` | `/api/v1/notifications/channels/{id}/test` | Send test notification |
 | `GET` | `/api/v1/notifications/logs` | List delivery logs |
 
+### On-Call Schedules
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/oncall/schedules` | List schedules (paginated, `active_only` filter) |
+| `POST` | `/api/v1/oncall/schedules` | Create schedule (admin) |
+| `GET` | `/api/v1/oncall/schedules/{id}` | Get schedule |
+| `PUT` | `/api/v1/oncall/schedules/{id}` | Update schedule (admin) |
+| `DELETE` | `/api/v1/oncall/schedules/{id}` | Delete schedule (admin) |
+| `GET` | `/api/v1/oncall/schedules/{id}/current` | Get who is currently on call |
+| `POST` | `/api/v1/oncall/schedules/{id}/overrides` | Create temporary override (admin) |
+| `DELETE` | `/api/v1/oncall/overrides/{id}` | Delete override (admin) |
+
+### Escalation Policies
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/oncall/policies` | List escalation policies |
+| `POST` | `/api/v1/oncall/policies` | Create policy (admin) |
+| `GET` | `/api/v1/oncall/policies/{id}` | Get policy |
+| `PUT` | `/api/v1/oncall/policies/{id}` | Update policy (admin) |
+| `DELETE` | `/api/v1/oncall/policies/{id}` | Delete policy (admin) |
+
+### Service Mappings
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/oncall/mappings` | List service-to-policy mappings |
+| `POST` | `/api/v1/oncall/mappings` | Create mapping (admin) |
+| `DELETE` | `/api/v1/oncall/mappings/{id}` | Delete mapping (admin) |
+
 ### Stats & Settings
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -343,7 +417,7 @@ curl -X POST http://localhost:8000/api/v1/notifications/channels \
 ### WebSocket
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/v1/ws?token={api_key}` | Real-time event stream |
+| `GET /api/v1/ws?token={jwt_or_api_key}` | Real-time event stream |
 
 ## Configuration
 
@@ -353,8 +427,12 @@ All settings are configurable via environment variables:
 |----------|---------|-------------|
 | `DATABASE_URL` | `postgresql+asyncpg://solace:solace@localhost:5432/solace` | PostgreSQL connection |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
-| `API_KEY` | `""` | API key for authentication (empty = no auth in dev) |
-| `SECRET_KEY` | `change-me-to-a-random-secret-key` | Secret for signing |
+| `API_KEY` | `""` | API key for webhook ingestion (empty = no auth in dev) |
+| `SECRET_KEY` | `change-me-to-a-random-secret-key` | Secret for JWT signing |
+| `ADMIN_USERNAME` | `admin` | Default admin username (created on first startup) |
+| `ADMIN_PASSWORD` | `admin` | Default admin password |
+| `ADMIN_EMAIL` | `admin@solace.local` | Default admin email |
+| `JWT_EXPIRE_MINUTES` | `480` | JWT token expiry (8 hours) |
 | `DEDUP_WINDOW_SECONDS` | `300` | Window for deduplicating identical alerts (5 min) |
 | `CORRELATION_WINDOW_SECONDS` | `600` | Window for correlating alerts into incidents (10 min) |
 | `NOTIFICATION_COOLDOWN_SECONDS` | `300` | Per-channel, per-incident notification cooldown (5 min) |
@@ -370,7 +448,7 @@ All settings are configurable via environment variables:
 
 ## Tech Stack
 
-**Backend:** Python 3.11+, FastAPI, async SQLAlchemy (asyncpg), Alembic, PostgreSQL, Redis
+**Backend:** Python 3.12+, FastAPI, async SQLAlchemy (asyncpg), Alembic, PostgreSQL, Redis, python-jose (JWT), passlib (bcrypt)
 
 **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, Zustand
 
@@ -426,13 +504,19 @@ cd frontend && npm install && npm run dev
 - [x] Dashboard stats (MTTA, MTTR, counts by status/severity)
 - [x] Real-time WebSocket updates with fallback polling
 - [x] Keyboard shortcuts for fast navigation
-- [x] Dark ops-console UI theme
+- [x] Light and dark theme toggle
+- [x] JWT authentication with default admin account
+- [x] Role-based access control (admin, user, viewer)
+- [x] User management (create, edit, deactivate)
+- [x] On-call scheduling (hourly/daily/weekly/custom rotations)
+- [x] Temporary on-call overrides
+- [x] Escalation policies with multi-level targets
+- [x] Service-to-policy mapping with glob patterns and priority ordering
 
 ### Next Up
-- [ ] On-call scheduling and rotations
-- [ ] Escalation policies (auto-escalate if not ack'd in N minutes)
-- [ ] User accounts, RBAC, and SSO (Google, GitHub, SAML)
+- [ ] SSO integration (Google, GitHub, SAML)
 - [ ] SMS and voice call notifications (Twilio)
+- [ ] Background escalation checker (auto-escalate if not ack'd in N minutes)
 - [ ] Analytics and reporting dashboards
 - [ ] Status pages (public incident status)
 - [ ] Heartbeat / dead-man monitoring
@@ -442,4 +526,4 @@ cd frontend && npm install && npm run dev
 
 ## License
 
-MIT
+Apache 2.0
