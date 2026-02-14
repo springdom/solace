@@ -3,7 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.deps import AuthContext, require_role
 from backend.database import get_db
+from backend.models import UserRole
 from backend.schemas import (
     AlertAckRequest,
     IncidentDetailResponse,
@@ -75,13 +77,14 @@ async def get_incident_detail(
 async def ack_incident(
     incident_id: str,
     body: AlertAckRequest | None = None,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ):
     """Acknowledge an incident and all its firing alerts."""
     incident = await acknowledge_incident(
         db,
         incident_id,
-        acknowledged_by=body.acknowledged_by if body else None,
+        acknowledged_by=auth.display_name,
     )
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -93,6 +96,7 @@ async def ack_incident(
 @router.post("/{incident_id}/resolve", response_model=IncidentResponse)
 async def resolve_incident_route(
     incident_id: str,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ):
     """Resolve an incident and all its active alerts."""

@@ -7,12 +7,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.api.deps import AuthContext, require_role
 from backend.database import get_db
 from backend.models import (
     ChannelType,
     Incident,
     NotificationChannel,
     NotificationLog,
+    UserRole,
 )
 from backend.schemas import (
     NotificationChannelCreate,
@@ -59,6 +61,7 @@ async def list_channels(
 @router.post("/channels", response_model=NotificationChannelResponse, status_code=201)
 async def create_channel(
     data: NotificationChannelCreate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new notification channel."""
@@ -113,6 +116,7 @@ async def get_channel(
 async def update_channel(
     channel_id: str,
     data: NotificationChannelUpdate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a notification channel."""
@@ -135,6 +139,7 @@ async def update_channel(
 @router.delete("/channels/{channel_id}", status_code=204)
 async def delete_channel(
     channel_id: str,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """Soft-delete a notification channel (set is_active=False)."""
@@ -152,6 +157,7 @@ async def delete_channel(
 @router.post("/channels/{channel_id}/test")
 async def test_channel(
     channel_id: str,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """Send a test notification through a channel."""

@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.deps import AuthContext, require_role
 from backend.database import get_db
-from backend.models import SilenceWindow
+from backend.models import SilenceWindow, UserRole
 from backend.schemas import (
     SilenceWindowCreate,
     SilenceWindowListResponse,
@@ -68,9 +69,10 @@ async def list_silences(
 @router.post("", response_model=SilenceWindowResponse, status_code=201)
 async def create_silence(
     data: SilenceWindowCreate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new silence window."""
+    """Create a new silence window (admin only)."""
     if data.ends_at <= data.starts_at:
         raise HTTPException(400, "ends_at must be after starts_at")
 
@@ -79,7 +81,7 @@ async def create_silence(
         matchers=data.matchers,
         starts_at=data.starts_at,
         ends_at=data.ends_at,
-        created_by=data.created_by,
+        created_by=auth.display_name,
         reason=data.reason,
     )
     db.add(window)
@@ -106,6 +108,7 @@ async def get_silence(
 async def update_silence(
     silence_id: str,
     data: SilenceWindowUpdate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a silence window."""
@@ -132,6 +135,7 @@ async def update_silence(
 @router.delete("/{silence_id}", status_code=204)
 async def delete_silence(
     silence_id: str,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
     """Soft-delete a silence window (set is_active=False)."""

@@ -6,6 +6,8 @@ import { useIncidentStore } from './stores/incidentStore';
 import { useStatsStore } from './stores/statsStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { useWSStore } from './stores/wsStore';
+import { useAuthStore } from './stores/authStore';
+import { useThemeStore } from './stores/themeStore';
 import { AlertRow } from './components/AlertRow';
 import { AlertDetail } from './components/AlertDetail';
 import { IncidentRow } from './components/IncidentRow';
@@ -17,9 +19,13 @@ import { StatsBar } from './components/StatsBar';
 import { ColumnHeader } from './components/ColumnHeader';
 import { SilenceList } from './components/SilenceList';
 import { NotificationChannelList } from './components/NotificationChannelList';
+import { LoginPage } from './components/LoginPage';
+import { ChangePasswordPage } from './components/ChangePasswordPage';
+import { UserManagement } from './components/UserManagement';
+import { OnCallView } from './components/OnCallView';
 import type { SortOption } from './components/SortControl';
 
-type View = 'alerts' | 'incidents' | 'silences' | 'channels' | 'settings';
+type View = 'alerts' | 'incidents' | 'silences' | 'channels' | 'settings' | 'oncall' | 'users' | 'statistics';
 
 const ALERT_STATUS_TABS = [
   { key: '', label: 'All' },
@@ -77,7 +83,59 @@ function SeverityCount({ severity, count }: { severity: Severity; count: number 
   );
 }
 
+const ROLE_COLORS: Record<string, string> = {
+  admin: 'bg-red-500/10 text-red-400 border-red-500/20',
+  user: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  viewer: 'bg-gray-500/10 text-gray-400 border-gray-500/20',
+};
+
 export default function App() {
+  const { isAuthenticated, mustChangePassword, loading: authLoading, user, logout } = useAuthStore();
+  const loadFromStorage = useAuthStore((s) => s.loadFromStorage);
+  const isRole = useAuthStore((s) => s.isRole);
+
+  useEffect(() => {
+    loadFromStorage();
+  }, [loadFromStorage]);
+
+  if (authLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-solace-bg">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-md bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center animate-pulse">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="white">
+              <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5a1 1 0 110 2 1 1 0 010-2zM6.5 7h3l-.5 5.5h-2L6.5 7z" />
+            </svg>
+          </div>
+          <span className="text-sm text-solace-muted">Loading...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  if (mustChangePassword) {
+    return <ChangePasswordPage />;
+  }
+
+  return <Dashboard user={user!} logout={logout} isRole={isRole} />;
+}
+
+function Dashboard({ user, logout, isRole }: {
+  user: import('./lib/types').UserProfile;
+  logout: () => void;
+  isRole: (...roles: import('./lib/types').UserRole[]) => boolean;
+}) {
+  const isAdmin = isRole('admin');
+  const isViewer = isRole('viewer');
+
+  // Theme
+  const theme = useThemeStore((s) => s.theme);
+  const toggleTheme = useThemeStore((s) => s.toggle);
+
   // Initialize WebSocket + polling + initial data load
   const wsInit = useWSStore((s) => s.init);
   const wsCleanup = useWSStore((s) => s.cleanup);
@@ -91,6 +149,7 @@ export default function App() {
   // View state (local — purely UI)
   const [view, setView] = useState<View>('incidents');
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   // Alert store
   const alerts = useAlertStore((s) => s.alerts);
@@ -213,6 +272,18 @@ export default function App() {
     }
   };
 
+  // Dynamic nav items based on role
+  const navItems: { key: View; label: string }[] = [
+    { key: 'incidents', label: 'Incidents' },
+    { key: 'alerts', label: 'Alerts' },
+    { key: 'oncall', label: 'On-Call' },
+    { key: 'silences', label: 'Silences' },
+    { key: 'channels', label: 'Channels' },
+    { key: 'statistics', label: 'Statistics' },
+    { key: 'settings', label: 'Settings' },
+    ...(isAdmin ? [{ key: 'users' as View, label: 'Users' }] : []),
+  ];
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -228,6 +299,8 @@ export default function App() {
         case 'Escape':
           if (showShortcutHelp) {
             setShowShortcutHelp(false);
+          } else if (showUserMenu) {
+            setShowUserMenu(false);
           } else if (selectedAlert) {
             selectAlert(null);
           } else if (selectedIncident) {
@@ -235,6 +308,7 @@ export default function App() {
           }
           break;
         case 'a':
+          if (isViewer) break;
           if (selectedAlert && selectedAlert.status === 'firing') {
             handleAlertAck(selectedAlert.id);
           } else if (selectedIncident && selectedIncident.status === 'open') {
@@ -242,6 +316,7 @@ export default function App() {
           }
           break;
         case 'r':
+          if (isViewer) break;
           if (selectedAlert && (selectedAlert.status === 'firing' || selectedAlert.status === 'acknowledged')) {
             handleAlertResolve(selectedAlert.id);
           } else if (selectedIncident && (selectedIncident.status === 'open' || selectedIncident.status === 'acknowledged')) {
@@ -280,7 +355,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [view, alerts, incidents, selectedAlert, selectedIncident, showShortcutHelp]);
+  }, [view, alerts, incidents, selectedAlert, selectedIncident, showShortcutHelp, showUserMenu, isViewer]);
 
   return (
     <div className="h-screen flex flex-col bg-solace-bg">
@@ -326,20 +401,20 @@ export default function App() {
 
           {/* View toggle */}
           <div className="flex items-center bg-solace-surface rounded-lg p-0.5">
-            {(['incidents', 'alerts', 'silences', 'channels', 'settings'] as const).map(v => (
+            {navItems.map(v => (
               <button
-                key={v}
-                onClick={() => switchView(v)}
+                key={v.key}
+                onClick={() => switchView(v.key)}
                 className={`
                   px-3 py-1.5 text-xs font-medium rounded-md transition-colors
-                  ${view === v
+                  ${view === v.key
                     ? 'bg-solace-bg text-solace-bright shadow-sm'
                     : 'text-solace-muted hover:text-solace-text'
                   }
                 `}
               >
-                {v.charAt(0).toUpperCase() + v.slice(1)}
-                {v === 'incidents' && openIncidentCount > 0 && (
+                {v.label}
+                {v.key === 'incidents' && openIncidentCount > 0 && (
                   <span className="ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500/20 text-red-400 text-[10px] font-mono font-bold">
                     {openIncidentCount}
                   </span>
@@ -373,6 +448,57 @@ export default function App() {
             }
           </span>
           <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-500 animate-pulse-dot' : 'bg-yellow-500'}`} title={wsConnected ? 'Connected' : 'Reconnecting...'} />
+
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            className="p-1.5 rounded-md hover:bg-solace-surface text-solace-muted hover:text-solace-bright transition-colors"
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {theme === 'dark' ? (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <circle cx="8" cy="8" r="3" />
+                <path d="M8 1.5v1M8 13.5v1M1.5 8h1M13.5 8h1M3.4 3.4l.7.7M11.9 11.9l.7.7M3.4 12.6l.7-.7M11.9 4.1l.7-.7" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M13.5 9.2A5.5 5.5 0 016.8 2.5 6 6 0 1013.5 9.2z" />
+              </svg>
+            )}
+          </button>
+
+          {/* User menu */}
+          <div className="relative">
+            <button
+              onClick={() => setShowUserMenu(prev => !prev)}
+              className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-solace-surface transition-colors"
+            >
+              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-[10px] font-bold">
+                {user.display_name.charAt(0).toUpperCase()}
+              </div>
+              <span className="text-xs text-solace-text">{user.display_name}</span>
+              <span className={`px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase rounded border ${ROLE_COLORS[user.role]}`}>
+                {user.role}
+              </span>
+            </button>
+            {showUserMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowUserMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 w-48 bg-solace-surface border border-solace-border rounded-lg shadow-xl py-1">
+                  <div className="px-3 py-2 border-b border-solace-border">
+                    <div className="text-xs text-solace-bright font-medium">{user.display_name}</div>
+                    <div className="text-[10px] text-solace-muted font-mono">@{user.username}</div>
+                  </div>
+                  <button
+                    onClick={() => { setShowUserMenu(false); logout(); }}
+                    className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                  >
+                    Sign Out
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -495,7 +621,7 @@ export default function App() {
       }
 
       {/* Bulk actions toolbar */}
-      {view === 'alerts' && hasBulkSelection && (
+      {view === 'alerts' && hasBulkSelection && !isViewer && (
         <div className="flex-shrink-0 flex items-center gap-3 px-5 py-2 border-b border-blue-500/20 bg-blue-500/5">
           <span className="text-xs font-mono text-blue-400">{selectedIds.size} selected</span>
           <button
@@ -531,6 +657,7 @@ export default function App() {
           setArchiveDays={setArchiveDays}
           onArchive={handleArchive}
           archiveResult={archiveResult}
+          isAdmin={isAdmin}
         />
       ) : view === 'silences' ? (
         <div className="flex-1 min-h-0">
@@ -540,6 +667,18 @@ export default function App() {
         <div className="flex-1 min-h-0">
           <NotificationChannelList />
         </div>
+      ) : view === 'oncall' ? (
+        <div className="flex-1 min-h-0">
+          <OnCallView isAdmin={isAdmin} />
+        </div>
+      ) : view === 'users' && isAdmin ? (
+        <div className="flex-1 min-h-0">
+          <UserManagement />
+        </div>
+      ) : view === 'statistics' ? (
+        <div className="flex-1 min-h-0">
+          <StatisticsView stats={stats} />
+        </div>
       ) : (
       <div className="flex-1 flex min-h-0">
         {/* List */}
@@ -548,14 +687,16 @@ export default function App() {
           {view === 'alerts' ? (
             <div className="flex-shrink-0 flex items-center gap-3 px-4 py-2 border-b border-solace-border bg-solace-surface/20">
               {/* Select all checkbox */}
-              <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
-                <input
-                  type="checkbox"
-                  checked={selectedIds.size > 0 && selectedIds.size === alerts.length}
-                  onChange={() => selectedIds.size === alerts.length ? clearSelection() : selectAll()}
-                  className="rounded border-solace-border bg-solace-bg text-blue-500 focus:ring-0 focus:ring-offset-0"
-                />
-              </div>
+              {!isViewer && (
+                <div className="flex-shrink-0" onClick={e => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.size > 0 && selectedIds.size === alerts.length}
+                    onChange={() => selectedIds.size === alerts.length ? clearSelection() : selectAll()}
+                    className="rounded border-solace-border bg-solace-bg text-blue-500 focus:ring-0 focus:ring-offset-0"
+                  />
+                </div>
+              )}
               <div className="w-16">
                 <ColumnHeader label="Severity" sortKey="severity" currentSort={alertFilters.sortBy} currentOrder={alertFilters.sortOrder}
                   onSort={k => { setAlertFilters({ sortBy: k, sortOrder: alertFilters.sortBy === k && alertFilters.sortOrder === 'desc' ? 'asc' : 'desc', page: 1 }); }} />
@@ -628,11 +769,11 @@ export default function App() {
                       alert={alert}
                       selected={selectedAlert?.id === alert.id}
                       checked={selectedIds.has(alert.id)}
-                      showCheckbox={true}
+                      showCheckbox={!isViewer}
                       onSelect={selectAlert}
-                      onAcknowledge={handleAlertAck}
-                      onResolve={handleAlertResolve}
-                      onToggleCheck={toggleSelect}
+                      onAcknowledge={isViewer ? undefined : handleAlertAck}
+                      onResolve={isViewer ? undefined : handleAlertResolve}
+                      onToggleCheck={isViewer ? undefined : toggleSelect}
                     />
                   ))}
                 </div>
@@ -659,8 +800,8 @@ export default function App() {
                       incident={incident}
                       selected={selectedIncident?.id === incident.id}
                       onSelect={selectIncident}
-                      onAcknowledge={handleIncidentAck}
-                      onResolve={handleIncidentResolve}
+                      onAcknowledge={isViewer ? undefined : handleIncidentAck}
+                      onResolve={isViewer ? undefined : handleIncidentResolve}
                     />
                   ))}
                 </div>
@@ -691,14 +832,14 @@ export default function App() {
           <div className="w-[400px] flex-shrink-0">
             <AlertDetail
               alert={selectedAlert}
-              onAcknowledge={handleAlertAck}
-              onResolve={handleAlertResolve}
+              onAcknowledge={isViewer ? undefined : handleAlertAck}
+              onResolve={isViewer ? undefined : handleAlertResolve}
               onClose={() => selectAlert(null)}
-              onTagAdd={async (alertId, tag) => {
+              onTagAdd={isViewer ? undefined : async (alertId, tag) => {
                 const updated = await addTag(alertId, tag);
                 return updated;
               }}
-              onTagRemove={async (alertId, tag) => {
+              onTagRemove={isViewer ? undefined : async (alertId, tag) => {
                 const updated = await removeTag(alertId, tag);
                 return updated;
               }}
@@ -711,8 +852,8 @@ export default function App() {
           <div className="w-[420px] flex-shrink-0">
             <IncidentDetail
               incident={selectedIncident}
-              onAcknowledge={handleIncidentAck}
-              onResolve={handleIncidentResolve}
+              onAcknowledge={isViewer ? undefined : handleIncidentAck}
+              onResolve={isViewer ? undefined : handleIncidentResolve}
               onClose={() => selectIncident(null)}
               onAlertSelect={handleAlertSelectFromIncident}
             />
@@ -724,6 +865,101 @@ export default function App() {
   );
 }
 
+function StatisticsView({ stats }: { stats: import('./lib/api').DashboardStats | null }) {
+  if (!stats) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <span className="text-sm text-solace-muted">Loading statistics...</span>
+      </div>
+    );
+  }
+
+  const mtta = stats.mtta_seconds;
+  const mttr = stats.mttr_seconds;
+
+  const formatDuration = (seconds: number | null | undefined) => {
+    if (!seconds) return '--';
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+    return `${(seconds / 3600).toFixed(1)}h`;
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full space-y-6">
+      <h1 className="text-lg font-semibold text-solace-bright">Statistics</h1>
+
+      {/* Key metrics */}
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          { label: 'Active Alerts', value: stats.alerts.active, color: 'text-red-400' },
+          { label: 'Open Incidents', value: stats.incidents.by_status.open || 0, color: 'text-orange-400' },
+          { label: 'MTTA', value: formatDuration(mtta), color: 'text-blue-400' },
+          { label: 'MTTR', value: formatDuration(mttr), color: 'text-emerald-400' },
+        ].map(m => (
+          <div key={m.label} className="bg-solace-surface rounded-lg border border-solace-border p-4">
+            <div className="text-[10px] uppercase tracking-wider text-solace-muted mb-1">{m.label}</div>
+            <div className={`text-2xl font-mono font-bold ${m.color}`}>{m.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Alerts by severity */}
+      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+        <h2 className="text-sm font-semibold text-solace-bright mb-4">Alerts by Severity</h2>
+        <div className="space-y-2">
+          {(['critical', 'high', 'warning', 'low', 'info'] as const).map(sev => {
+            const count = stats.alerts.by_severity[sev] || 0;
+            const max = Math.max(...Object.values(stats.alerts.by_severity), 1);
+            const pct = (count / max) * 100;
+            const colors: Record<string, string> = {
+              critical: 'bg-red-500',
+              high: 'bg-orange-500',
+              warning: 'bg-yellow-500',
+              low: 'bg-blue-500',
+              info: 'bg-gray-500',
+            };
+            return (
+              <div key={sev} className="flex items-center gap-3">
+                <span className="w-16 text-[10px] font-mono uppercase text-solace-muted">{sev}</span>
+                <div className="flex-1 h-4 rounded bg-solace-bg overflow-hidden">
+                  <div className={`h-full rounded ${colors[sev]} transition-all`} style={{ width: `${pct}%` }} />
+                </div>
+                <span className="w-10 text-right text-xs font-mono text-solace-bright">{count}</span>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Alerts by status */}
+      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+        <h2 className="text-sm font-semibold text-solace-bright mb-4">Alerts by Status</h2>
+        <div className="grid grid-cols-4 gap-4">
+          {Object.entries(stats.alerts.by_status).map(([status, count]) => (
+            <div key={status} className="text-center">
+              <div className="text-xl font-mono font-bold text-solace-bright">{count}</div>
+              <div className="text-[10px] uppercase tracking-wider text-solace-muted mt-0.5">{status}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Incidents by status */}
+      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+        <h2 className="text-sm font-semibold text-solace-bright mb-4">Incidents by Status</h2>
+        <div className="grid grid-cols-3 gap-4">
+          {Object.entries(stats.incidents.by_status).map(([status, count]) => (
+            <div key={status} className="text-center">
+              <div className="text-xl font-mono font-bold text-solace-bright">{count}</div>
+              <div className="text-[10px] uppercase tracking-wider text-solace-muted mt-0.5">{status}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function SettingsView({
   settings,
   loading,
@@ -731,6 +967,7 @@ function SettingsView({
   setArchiveDays,
   onArchive,
   archiveResult,
+  isAdmin,
 }: {
   settings: import('./lib/types').AppSettings | null;
   loading: boolean;
@@ -738,6 +975,7 @@ function SettingsView({
   setArchiveDays: (n: number) => void;
   onArchive: () => void;
   archiveResult: string | null;
+  isAdmin: boolean;
 }) {
   if (loading && !settings) {
     return (
@@ -757,11 +995,11 @@ function SettingsView({
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
             <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">App Name</span>
-            <span className="text-solace-bright font-mono">{settings?.app_name || '—'}</span>
+            <span className="text-solace-bright font-mono">{settings?.app_name || '--'}</span>
           </div>
           <div>
             <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">Environment</span>
-            <span className="text-solace-bright font-mono">{settings?.app_env || '—'}</span>
+            <span className="text-solace-bright font-mono">{settings?.app_env || '--'}</span>
           </div>
         </div>
       </section>
@@ -772,46 +1010,48 @@ function SettingsView({
         <div className="grid grid-cols-3 gap-4 text-sm">
           <div>
             <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">Dedup Window</span>
-            <span className="text-solace-bright font-mono">{settings?.dedup_window_seconds ?? '—'}s</span>
+            <span className="text-solace-bright font-mono">{settings?.dedup_window_seconds ?? '--'}s</span>
           </div>
           <div>
             <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">Correlation Window</span>
-            <span className="text-solace-bright font-mono">{settings?.correlation_window_seconds ?? '—'}s</span>
+            <span className="text-solace-bright font-mono">{settings?.correlation_window_seconds ?? '--'}s</span>
           </div>
           <div>
             <span className="text-[10px] uppercase tracking-wider text-solace-muted block mb-0.5">Notification Cooldown</span>
-            <span className="text-solace-bright font-mono">{settings?.notification_cooldown_seconds ?? '—'}s</span>
+            <span className="text-solace-bright font-mono">{settings?.notification_cooldown_seconds ?? '--'}s</span>
           </div>
         </div>
       </section>
 
-      {/* Alert Retention / Archive */}
-      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
-        <h2 className="text-sm font-semibold text-solace-bright mb-3">Alert Retention</h2>
-        <p className="text-xs text-solace-muted mb-3">
-          Archive resolved alerts older than a specified number of days. Archived alerts remain accessible under the "Archived" tab.
-        </p>
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-solace-text">Archive resolved alerts older than</label>
-          <input
-            type="number"
-            min={1}
-            value={archiveDays}
-            onChange={e => setArchiveDays(Number(e.target.value) || 1)}
-            className="w-20 px-2 py-1 text-sm font-mono bg-solace-bg border border-solace-border rounded text-solace-bright focus:outline-none focus:border-emerald-500/50"
-          />
-          <span className="text-sm text-solace-text">days</span>
-          <button
-            onClick={onArchive}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
-          >
-            Archive Now
-          </button>
-          {archiveResult && (
-            <span className="text-xs font-mono text-emerald-400">{archiveResult}</span>
-          )}
-        </div>
-      </section>
+      {/* Alert Retention / Archive — admin only */}
+      {isAdmin && (
+        <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
+          <h2 className="text-sm font-semibold text-solace-bright mb-3">Alert Retention</h2>
+          <p className="text-xs text-solace-muted mb-3">
+            Archive resolved alerts older than a specified number of days. Archived alerts remain accessible under the "Archived" tab.
+          </p>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-solace-text">Archive resolved alerts older than</label>
+            <input
+              type="number"
+              min={1}
+              value={archiveDays}
+              onChange={e => setArchiveDays(Number(e.target.value) || 1)}
+              className="w-20 px-2 py-1 text-sm font-mono bg-solace-bg border border-solace-border rounded text-solace-bright focus:outline-none focus:border-emerald-500/50"
+            />
+            <span className="text-sm text-solace-text">days</span>
+            <button
+              onClick={onArchive}
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
+            >
+              Archive Now
+            </button>
+            {archiveResult && (
+              <span className="text-xs font-mono text-emerald-400">{archiveResult}</span>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Dashboard URL */}
       {settings?.solace_dashboard_url && (
@@ -820,14 +1060,6 @@ function SettingsView({
           <span className="text-sm text-solace-bright font-mono break-all">{settings.solace_dashboard_url}</span>
         </section>
       )}
-
-      {/* Profile placeholder */}
-      <section className="bg-solace-surface rounded-lg border border-solace-border p-5">
-        <h2 className="text-sm font-semibold text-solace-bright mb-2">Profile</h2>
-        <p className="text-xs text-solace-muted">
-          User profiles and authentication coming soon. This will include login, user roles, and notification preferences.
-        </p>
-      </section>
     </div>
   );
 }

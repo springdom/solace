@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -40,6 +41,49 @@ class IncidentStatus(enum.StrEnum):
     OPEN = "open"
     ACKNOWLEDGED = "acknowledged"
     RESOLVED = "resolved"
+
+
+class UserRole(enum.StrEnum):
+    ADMIN = "admin"
+    USER = "user"
+    VIEWER = "viewer"
+
+
+# ─── User ───────────────────────────────────────────────
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    username: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, values_callable=lambda x: [e.value for e in x]),
+        nullable=False, default=UserRole.VIEWER,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("idx_users_email", "email"),
+        Index("idx_users_username", "username"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<User {self.username} [{self.role.value}]>"
 
 
 # ─── Alert ───────────────────────────────────────────────
@@ -404,3 +448,13 @@ class NotificationLog(Base):
 
     def __repr__(self) -> str:
         return f"<NotificationLog {self.event_type} [{self.status.value}]>"
+
+
+# ─── On-Call Models (re-exported) ─────────────────────────
+# Imported after all base models are defined to avoid circular deps
+
+from backend.models.oncall import EscalationPolicy as EscalationPolicy  # noqa: E402
+from backend.models.oncall import OnCallOverride as OnCallOverride  # noqa: E402
+from backend.models.oncall import OnCallSchedule as OnCallSchedule  # noqa: E402
+from backend.models.oncall import RotationType as RotationType  # noqa: E402
+from backend.models.oncall import ServiceEscalationMapping as ServiceEscalationMapping  # noqa: E402

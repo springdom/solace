@@ -49,7 +49,11 @@ export const useWSStore = create<WSState>((set, get) => ({
     const connect = () => {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      const ws = new WebSocket(`${proto}//${host}/api/v1/ws`);
+      const token = localStorage.getItem('solace_token');
+      const wsUrl = token
+        ? `${proto}//${host}/api/v1/ws?token=${encodeURIComponent(token)}`
+        : `${proto}//${host}/api/v1/ws`;
+      const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         set({ connected: true });

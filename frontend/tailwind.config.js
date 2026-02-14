@@ -9,12 +9,12 @@ export default {
       },
       colors: {
         solace: {
-          bg: '#0a0e14',
-          surface: '#111720',
-          border: '#1e2736',
-          muted: '#3d4f65',
-          text: '#c5cdd8',
-          bright: '#e8ecf1',
+          bg: 'var(--solace-bg)',
+          surface: 'var(--solace-surface)',
+          border: 'var(--solace-border)',
+          muted: 'var(--solace-muted)',
+          text: 'var(--solace-text)',
+          bright: 'var(--solace-bright)',
         },
         severity: {
           critical: '#ef4444',

@@ -9,8 +9,8 @@ interface AlertRowProps {
   checked?: boolean;
   showCheckbox?: boolean;
   onSelect: (alert: Alert) => void;
-  onAcknowledge: (id: string) => void;
-  onResolve: (id: string) => void;
+  onAcknowledge?: (id: string) => void;
+  onResolve?: (id: string) => void;
   onToggleCheck?: (id: string) => void;
 }
 
@@ -99,9 +99,9 @@ export function AlertRow({ alert, selected, checked, showCheckbox, onSelect, onA
       </div>
 
       {/* Actions — absolutely positioned so columns don't shift */}
-      {isActive && (
+      {isActive && (onAcknowledge || onResolve) && (
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-solace-surface/95 backdrop-blur-sm rounded px-1 py-0.5">
-          {isFiring && (
+          {isFiring && onAcknowledge && (
             <button
               onClick={(e) => { e.stopPropagation(); onAcknowledge(alert.id); }}
               className="px-2 py-1 text-xs font-medium rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
@@ -109,12 +109,14 @@ export function AlertRow({ alert, selected, checked, showCheckbox, onSelect, onA
               ACK
             </button>
           )}
-          <button
-            onClick={(e) => { e.stopPropagation(); onResolve(alert.id); }}
-            className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-          >
-            RESOLVE
-          </button>
+          {onResolve && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onResolve(alert.id); }}
+              className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+            >
+              RESOLVE
+            </button>
+          )}
         </div>
       )}
     </div>

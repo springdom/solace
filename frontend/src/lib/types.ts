@@ -187,3 +187,99 @@ export interface AppSettings {
   notification_cooldown_seconds: number;
   solace_dashboard_url: string;
 }
+
+// ─── Auth ─────────────────────────────────────────────────
+
+export type UserRole = 'admin' | 'user' | 'viewer';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  is_active: boolean;
+  must_change_password: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: UserProfile;
+  must_change_password: boolean;
+}
+
+export interface UserListResponse {
+  users: UserProfile[];
+  total: number;
+}
+
+// ─── On-Call ──────────────────────────────────────────────
+
+export interface OnCallOverride {
+  id: string;
+  schedule_id: string;
+  user_id: string;
+  starts_at: string;
+  ends_at: string;
+  reason: string | null;
+  created_at: string;
+}
+
+export interface OnCallSchedule {
+  id: string;
+  name: string;
+  description: string | null;
+  timezone: string;
+  rotation_type: 'hourly' | 'daily' | 'weekly' | 'custom';
+  members: Array<{ user_id: string; order: number }>;
+  handoff_time: string;
+  rotation_interval_days: number;
+  rotation_interval_hours: number | null;
+  effective_from: string;
+  is_active: boolean;
+  overrides: OnCallOverride[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OnCallScheduleListResponse {
+  schedules: OnCallSchedule[];
+  total: number;
+}
+
+export interface OnCallCurrentResponse {
+  schedule_id: string;
+  schedule_name: string;
+  user: UserProfile | null;
+}
+
+export interface EscalationPolicy {
+  id: string;
+  name: string;
+  description: string | null;
+  repeat_count: number;
+  levels: Array<{
+    level: number;
+    targets: Array<{ type: 'user' | 'schedule'; id: string }>;
+    timeout_minutes: number;
+  }>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EscalationPolicyListResponse {
+  policies: EscalationPolicy[];
+  total: number;
+}
+
+export interface ServiceMapping {
+  id: string;
+  service_pattern: string;
+  severity_filter: string[] | null;
+  escalation_policy_id: string;
+  priority: number;
+  created_at: string | null;
+}

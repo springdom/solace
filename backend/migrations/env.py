@@ -7,7 +7,7 @@ from backend.config import get_settings
 from backend.database import Base
 
 # Import all models so Alembic can detect them
-from backend.models import Alert, AlertNote, Incident, IncidentEvent, Integration, NotificationChannel, NotificationLog, SilenceWindow  # noqa: F401
+from backend.models import Alert, AlertNote, EscalationPolicy, Incident, IncidentEvent, Integration, NotificationChannel, NotificationLog, OnCallOverride, OnCallSchedule, ServiceEscalationMapping, SilenceWindow, User  # noqa: F401
 
 config = context.config
 settings = get_settings()

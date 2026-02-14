@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.deps import AuthContext, require_role
 from backend.database import get_db
-from backend.models import Alert, AlertOccurrence
+from backend.models import Alert, AlertOccurrence, UserRole
 from backend.schemas import (
     AlertAckRequest,
     AlertListResponse,
@@ -52,6 +53,7 @@ router = APIRouter(prefix="/alerts", tags=["alerts"])
 async def edit_note(
     note_id: uuid.UUID,
     body: AlertNoteUpdate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> AlertNoteResponse:
     """Update the text of an existing note."""
@@ -68,6 +70,7 @@ async def edit_note(
 )
 async def remove_note(
     note_id: uuid.UUID,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a note."""
@@ -86,6 +89,7 @@ async def remove_note(
 )
 async def bulk_acknowledge(
     body: BulkAlertActionRequest,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> BulkAlertActionResponse:
     """Acknowledge multiple alerts at once."""
@@ -100,6 +104,7 @@ async def bulk_acknowledge(
 )
 async def bulk_resolve(
     body: BulkAlertActionRequest,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> BulkAlertActionResponse:
     """Resolve multiple alerts at once."""
@@ -115,6 +120,7 @@ async def archive_old_alerts(
     older_than_days: int = Query(
         default=30, ge=1, description="Archive resolved alerts older than N days",
     ),
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Archive resolved alerts that are older than the specified number of days."""
@@ -188,11 +194,13 @@ async def get_alert(
 async def ack_alert(
     alert_id: uuid.UUID,
     body: AlertAckRequest | None = None,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> AlertResponse:
     """Mark an alert as acknowledged."""
-    acknowledged_by = body.acknowledged_by if body else None
-    alert = await acknowledge_alert(db, str(alert_id), acknowledged_by)
+    alert = await acknowledge_alert(
+        db, str(alert_id), auth.display_name
+    )
 
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
@@ -207,6 +215,7 @@ async def ack_alert(
 )
 async def resolve(
     alert_id: uuid.UUID,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> AlertResponse:
     """Mark an alert as resolved."""
@@ -229,6 +238,7 @@ async def resolve(
 async def set_tags(
     alert_id: uuid.UUID,
     body: AlertTagsUpdate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> AlertResponse:
     """Replace all tags on an alert."""
@@ -246,6 +256,7 @@ async def set_tags(
 async def add_tag(
     alert_id: uuid.UUID,
     tag: str,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> AlertResponse:
     """Add a single tag to an alert."""
@@ -263,6 +274,7 @@ async def add_tag(
 async def delete_tag(
     alert_id: uuid.UUID,
     tag: str,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> AlertResponse:
     """Remove a single tag from an alert."""
@@ -301,11 +313,12 @@ async def list_notes(
 async def add_note(
     alert_id: uuid.UUID,
     body: AlertNoteCreate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> AlertNoteResponse:
     """Add a timestamped note to an alert."""
     try:
-        note = await create_alert_note(db, str(alert_id), body.text, body.author)
+        note = await create_alert_note(db, str(alert_id), body.text, auth.display_name)
     except ValueError:
         raise HTTPException(status_code=404, detail="Alert not found")
     return AlertNoteResponse.model_validate(note)
@@ -322,6 +335,7 @@ async def add_note(
 async def set_ticket_url(
     alert_id: uuid.UUID,
     body: AlertTicketUpdate,
+    auth: AuthContext = Depends(require_role(UserRole.ADMIN, UserRole.USER)),
     db: AsyncSession = Depends(get_db),
 ) -> AlertResponse:
     """Link an alert to an external ticket (Jira, GitHub issue, etc)."""

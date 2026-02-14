@@ -1,8 +1,10 @@
+import re
 import uuid
 from datetime import datetime
 from enum import StrEnum
+from zoneinfo import available_timezones
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ─── Enums (mirroring SQLAlchemy but for API layer) ──────
 
@@ -454,3 +456,256 @@ class NotificationLogListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ─── Auth ─────────────────────────────────────────────────
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., max_length=100)
+    password: str = Field(..., min_length=1)
+
+
+class UserResponse(BaseModel):
+    id: uuid.UUID
+    email: str
+    username: str
+    display_name: str
+    role: str
+    is_active: bool
+    must_change_password: bool
+    created_at: datetime
+    last_login_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+    must_change_password: bool
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class UserCreate(BaseModel):
+    email: str = Field(..., max_length=255)
+    username: str = Field(..., max_length=100)
+    password: str = Field(..., min_length=8, max_length=128)
+    display_name: str = Field(default="", max_length=255)
+    role: str = Field(default="user")
+
+
+class UserUpdate(BaseModel):
+    email: str | None = None
+    display_name: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class UserListResponse(BaseModel):
+    users: list[UserResponse]
+    total: int
+
+
+# ─── On-Call Schedules ────────────────────────────────────
+
+
+class OnCallMemberSchema(BaseModel):
+    """A member in an on-call rotation."""
+    user_id: uuid.UUID
+    order: int = Field(ge=0)
+
+
+class OnCallScheduleCreate(BaseModel):
+    name: str = Field(..., max_length=255)
+    description: str | None = None
+    timezone: str = Field(default="UTC", max_length=100)
+    rotation_type: str = Field(default="weekly")
+    members: list[OnCallMemberSchema] = Field(default_factory=list)
+    handoff_time: str = Field(default="09:00", max_length=5)
+    rotation_interval_days: int = Field(default=7, ge=1, le=365)
+    rotation_interval_hours: int | None = Field(default=None, ge=1, le=720)
+    effective_from: datetime | None = None
+    is_active: bool = True
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        if v not in available_timezones():
+            raise ValueError(f"Invalid timezone: {v}")
+        return v
+
+    @field_validator("handoff_time")
+    @classmethod
+    def validate_handoff_time(cls, v: str) -> str:
+        if not re.match(r"^\d{2}:\d{2}$", v):
+            raise ValueError("handoff_time must be in HH:MM format")
+        h, m = int(v[:2]), int(v[3:])
+        if h > 23 or m > 59:
+            raise ValueError("handoff_time hours must be 0-23 and minutes 0-59")
+        return v
+
+    @field_validator("rotation_type")
+    @classmethod
+    def validate_rotation_type(cls, v: str) -> str:
+        valid = {"hourly", "daily", "weekly", "custom"}
+        if v not in valid:
+            raise ValueError(f"rotation_type must be one of: {', '.join(sorted(valid))}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_interval_for_type(self) -> "OnCallScheduleCreate":
+        if self.rotation_type == "hourly" and not self.rotation_interval_hours:
+            self.rotation_interval_hours = 1
+        return self
+
+
+class OnCallScheduleUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    timezone: str | None = None
+    rotation_type: str | None = None
+    members: list[OnCallMemberSchema] | None = None
+    handoff_time: str | None = None
+    rotation_interval_days: int | None = None
+    rotation_interval_hours: int | None = Field(default=None, ge=1, le=720)
+    is_active: bool | None = None
+
+
+class OnCallOverrideResponse(BaseModel):
+    id: uuid.UUID
+    schedule_id: uuid.UUID
+    user_id: uuid.UUID
+    starts_at: datetime
+    ends_at: datetime
+    reason: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OnCallScheduleResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str | None = None
+    timezone: str
+    rotation_type: str
+    members: list[dict] = []
+    handoff_time: str
+    rotation_interval_days: int
+    rotation_interval_hours: int | None = None
+    effective_from: datetime
+    is_active: bool
+    overrides: list[OnCallOverrideResponse] = []
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class OnCallScheduleListResponse(BaseModel):
+    schedules: list[OnCallScheduleResponse]
+    total: int
+
+
+class OnCallCurrentResponse(BaseModel):
+    schedule_id: uuid.UUID
+    schedule_name: str
+    user: UserResponse | None = None
+
+
+class OnCallOverrideCreate(BaseModel):
+    user_id: uuid.UUID
+    starts_at: datetime
+    ends_at: datetime
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "OnCallOverrideCreate":
+        if self.ends_at <= self.starts_at:
+            raise ValueError("ends_at must be after starts_at")
+        return self
+
+
+# ─── Escalation Policies ─────────────────────────────────
+
+
+class EscalationTargetSchema(BaseModel):
+    """A single escalation target — a user or on-call schedule."""
+    type: str = Field(..., description="Target type: 'user' or 'schedule'")
+    id: uuid.UUID
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v not in ("user", "schedule"):
+            raise ValueError("target type must be 'user' or 'schedule'")
+        return v
+
+
+class EscalationLevelSchema(BaseModel):
+    """A single escalation level within a policy."""
+    level: int = Field(..., ge=1)
+    targets: list[EscalationTargetSchema] = Field(default_factory=list)
+    timeout_minutes: int = Field(default=15, ge=1, le=1440)
+
+
+class EscalationPolicyCreate(BaseModel):
+    name: str = Field(..., max_length=255)
+    description: str | None = None
+    repeat_count: int = Field(default=0, ge=0, le=10)
+    levels: list[EscalationLevelSchema] = Field(default_factory=list)
+
+
+class EscalationPolicyUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    repeat_count: int | None = Field(default=None, ge=0, le=10)
+    levels: list[EscalationLevelSchema] | None = None
+
+
+class EscalationPolicyResponse(BaseModel):
+    id: uuid.UUID
+    name: str
+    description: str | None = None
+    repeat_count: int = 0
+    levels: list[dict] = []
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PolicyListResponse(BaseModel):
+    policies: list[EscalationPolicyResponse]
+    total: int
+
+
+# ─── Service Escalation Mappings ──────────────────────────
+
+
+class ServiceMappingCreate(BaseModel):
+    service_pattern: str = Field(..., max_length=255)
+    severity_filter: list[str] | None = None
+    escalation_policy_id: uuid.UUID
+    priority: int = Field(default=0, ge=0, le=1000)
+
+
+class ServiceMappingResponse(BaseModel):
+    id: uuid.UUID
+    service_pattern: str
+    severity_filter: list[str] | None = None
+    escalation_policy_id: uuid.UUID
+    priority: int = 0
+    created_at: datetime | None = None
+
+    model_config = {"from_attributes": True}

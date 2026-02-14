@@ -2,12 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ─── Dark Theme (default) ────────────────────────────── */
+:root,
+[data-theme="dark"] {
+  --solace-bg: #0a0e14;
+  --solace-surface: #111720;
+  --solace-border: #1e2736;
+  --solace-muted: #3d4f65;
+  --solace-text: #c5cdd8;
+  --solace-bright: #e8ecf1;
+}
+
+/* ─── Light Theme ─────────────────────────────────────── */
+[data-theme="light"] {
+  --solace-bg: #f5f7fa;
+  --solace-surface: #ffffff;
+  --solace-border: #e2e6ec;
+  --solace-muted: #8893a4;
+  --solace-text: #3d4654;
+  --solace-bright: #111827;
+}
+
 body {
   margin: 0;
-  background: #0a0e14;
-  color: #c5cdd8;
+  background: var(--solace-bg);
+  color: var(--solace-text);
   font-family: 'DM Sans', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* Scrollbar */
@@ -19,11 +41,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e2736;
+  background: var(--solace-border);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3d4f65;
+  background: var(--solace-muted);
 }
 
 /* Severity pulse for firing critical alerts */

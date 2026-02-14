@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     notification_cooldown_seconds: int = 300
     solace_dashboard_url: str = "http://localhost:3000"
 
+    # ── Auth ────────────────────────────────────────────
+    admin_username: str = "admin"
+    admin_password: str = "solace"
+    admin_email: str = "admin@solace.local"
+    jwt_expire_minutes: int = 480  # 8 hours
+
     # ── Server ───────────────────────────────────────────
     host: str = "0.0.0.0"
     port: int = 8000

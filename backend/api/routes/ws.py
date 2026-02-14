@@ -48,13 +48,20 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-def _check_ws_auth(api_key: str | None) -> bool:
-    """Validate API key for WebSocket connections."""
+def _check_ws_auth(token: str | None) -> bool:
+    """Validate API key or JWT token for WebSocket connections."""
     if settings.is_dev and settings.api_key == "":
         return True
-    if not api_key:
+    if not token:
         return False
-    return secrets.compare_digest(api_key, settings.api_key)
+    # Try API key first
+    if settings.api_key and secrets.compare_digest(token, settings.api_key):
+        return True
+    # Try JWT
+    from backend.core.security import decode_token
+
+    payload = decode_token(token)
+    return payload is not None and "sub" in payload
 
 
 @router.websocket("/ws")
@@ -64,7 +71,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     Clients connect and receive JSON events when alerts or incidents
     are created, updated, or resolved.
 
-    Auth: pass API key as ?token= query param.
+    Auth: pass API key or JWT token as ?token= query param.
 
     Event format:
         {"type": "alert.created", "data": {...}}
@@ -72,7 +79,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     """
     token = ws.query_params.get("token")
     if not _check_ws_auth(token):
-        await ws.close(code=4003, reason="Invalid or missing API key")
+        await ws.close(code=4003, reason="Invalid or missing token")
         return
 
     await manager.connect(ws)

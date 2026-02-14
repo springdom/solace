@@ -7,8 +7,8 @@ interface IncidentRowProps {
   incident: Incident;
   selected: boolean;
   onSelect: (incident: Incident) => void;
-  onAcknowledge: (id: string) => void;
-  onResolve: (id: string) => void;
+  onAcknowledge?: (id: string) => void;
+  onResolve?: (id: string) => void;
 }
 
 export function IncidentRow({ incident, selected, onSelect, onAcknowledge, onResolve }: IncidentRowProps) {
@@ -61,9 +61,9 @@ export function IncidentRow({ incident, selected, onSelect, onAcknowledge, onRes
       </div>
 
       {/* Actions — absolutely positioned so columns don't shift */}
-      {isActive && (
+      {isActive && (onAcknowledge || onResolve) && (
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-solace-surface/95 backdrop-blur-sm rounded px-1 py-0.5">
-          {isOpen && (
+          {isOpen && onAcknowledge && (
             <button
               onClick={(e) => { e.stopPropagation(); onAcknowledge(incident.id); }}
               className="px-2 py-1 text-xs font-medium rounded bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 transition-colors"
@@ -71,12 +71,14 @@ export function IncidentRow({ incident, selected, onSelect, onAcknowledge, onRes
               ACK
             </button>
           )}
-          <button
-            onClick={(e) => { e.stopPropagation(); onResolve(incident.id); }}
-            className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-          >
-            RESOLVE
-          </button>
+          {onResolve && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onResolve(incident.id); }}
+              className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+            >
+              RESOLVE
+            </button>
+          )}
         </div>
       )}
     </div>

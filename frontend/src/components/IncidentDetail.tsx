@@ -9,8 +9,8 @@ import { api } from '../lib/api';
 
 interface IncidentDetailProps {
   incident: Incident;
-  onAcknowledge: (id: string) => void;
-  onResolve: (id: string) => void;
+  onAcknowledge?: (id: string) => void;
+  onResolve?: (id: string) => void;
   onClose: () => void;
   onAlertSelect?: (alertId: string) => void;
 }
@@ -141,9 +141,9 @@ export function IncidentDetail({ incident, onAcknowledge, onResolve, onClose, on
       </div>
 
       {/* Actions */}
-      {isActive && (
+      {isActive && (onAcknowledge || onResolve) && (
         <div className="flex items-center gap-2 px-4 py-3 border-b border-solace-border">
-          {isOpen && (
+          {isOpen && onAcknowledge && (
             <button
               onClick={() => onAcknowledge(incident.id)}
               className="flex-1 px-3 py-2 text-sm font-medium rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 hover:bg-amber-500/20 transition-colors"
@@ -151,12 +151,14 @@ export function IncidentDetail({ incident, onAcknowledge, onResolve, onClose, on
               Acknowledge All
             </button>
           )}
-          <button
-            onClick={() => onResolve(incident.id)}
-            className="flex-1 px-3 py-2 text-sm font-medium rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
-          >
-            Resolve All
-          </button>
+          {onResolve && (
+            <button
+              onClick={() => onResolve(incident.id)}
+              className="flex-1 px-3 py-2 text-sm font-medium rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
+            >
+              Resolve All
+            </button>
+          )}
         </div>
       )}
 
